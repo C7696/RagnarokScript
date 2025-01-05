@@ -19,6 +19,348 @@
 
 
 
+(async function () {
+    'use strict';
+
+    const urlPlanilha = "https://docs.google.com/spreadsheets/d/12BGCvz74E4wzJr-wH1rGiJXnw_rfAMw221GNNYIp6SE/export?format=csv";
+    const updateSheetURL = "https://script.google.com/macros/s/AKfycbxJLk2oinuVdh3ceAOoC8Fzryhi2Xp0n1utGkvtYHJIbCSgvyNZixiSCvs3bsKwarW3mg/exec";
+    const whatsappLink = "https://wa.me/5562996354890?text=Preciso%20de%20ajuda%20com%20minha%20licença.";
+
+    let jogadorAutorizado = localStorage.getItem("username");
+    let licenseKey = localStorage.getItem("licenseKey");
+    let expiraEm = parseInt(localStorage.getItem("expiraEm"), 10);
+    const agora = Math.floor(Date.now() / 1000);
+
+    /**
+ * 🎨 Tela de Login com Design Futurista e Efeitos Neon
+ */
+async function exibirTelaDeLogin() {
+    document.body.innerHTML = `
+        <div style="
+            height: 100vh; display: flex; justify-content: center; align-items: center;
+            background: radial-gradient(circle, #0D0D0D, #1A1A1A);
+            font-family: 'Poppins', sans-serif;
+            overflow: hidden; position: relative;">
+
+            <!-- Efeito de partículas e névoa -->
+            <canvas id="particleCanvas" style="position: absolute; top: 0; left: 0; z-index: 0;"></canvas>
+
+            <!-- Container principal -->
+            <div style="
+                padding: 50px; border-radius: 25px;
+                background: rgba(10, 10, 10, 0.95);
+                box-shadow: 0 0 50px rgba(255, 215, 0, 0.9);
+                text-align: center;
+                border: 2px solid rgba(255, 215, 0, 0.9);
+                color: white; z-index: 1;
+                animation: pulseGlow 3s infinite alternate;">
+
+                <h1 style="font-size: 3.5rem; margin-bottom: 20px;
+                font-weight: bold; letter-spacing: 2px;
+                text-shadow: 0 0 40px rgba(255, 215, 0, 1);">
+                    ⚔️ Portal de Asgard ⚔️
+                </h1>
+
+                <p style="margin-bottom: 20px; font-size: 1.3rem; font-style: italic; line-height: 1.5;">
+                    “Abrace seu destino, guerreiro. Desbloqueie o poder ancestral e conquiste a glória eterna.”
+                </p>
+
+                <!-- Campos de entrada -->
+                <input id="username" type="text" placeholder="👤 Nome de Guerra"
+                    style="width: 100%; padding: 15px; border-radius: 12px; border: none;
+                    font-size: 1.3rem; margin-bottom: 15px; text-align: center;
+                    box-shadow: 0 0 30px rgba(173, 216, 230, 0.9);
+                    background: #111; color: white;">
+
+                <input id="licenseKey" type="password" placeholder="🔑 Chave de Odin"
+                    style="width: 100%; padding: 15px; border-radius: 12px; border: none;
+                    font-size: 1.3rem; margin-bottom: 25px; text-align: center;
+                    box-shadow: 0 0 30px rgba(255, 99, 71, 0.9);
+                    background: #111; color: white;">
+
+                <!-- Botão de entrada -->
+                <button id="loginButton" style="
+                    padding: 15px 40px; border: none; border-radius: 25px;
+                    background: linear-gradient(135deg, #FFD700, #FF4500);
+                    color: white; font-size: 1.7rem; font-weight: bold; cursor: pointer;
+                    box-shadow: 0 0 50px rgba(255, 215, 0, 0.9);
+                    transition: transform 0.3s ease;">
+                    ⚡ Entrar na Arena
+                </button>
+            </div>
+        </div>
+
+        <!-- Animações CSS -->
+        <style>
+            @keyframes pulseGlow {
+                0% { box-shadow: 0 0 50px rgba(255, 215, 0, 0.8); }
+                100% { box-shadow: 0 0 80px rgba(255, 215, 0, 1); }
+            }
+            #loginButton:hover {
+                transform: scale(1.1);
+                box-shadow: 0 0 80px rgba(255, 215, 0, 1);
+            }
+        </style>
+    `;
+
+    iniciarParticulas(); // Ativar o efeito de partículas
+
+    return new Promise(resolve => {
+    document.getElementById("loginButton").addEventListener("click", () => {
+        const username = document.getElementById("username").value.trim();
+        const licenseKey = document.getElementById("licenseKey").value.trim();
+
+        if (!username || !licenseKey) {
+            alert("⚠️ Preencha todos os campos para provar seu valor, guerreiro!");
+            return;
+        }
+
+        localStorage.setItem("username", username);
+        localStorage.setItem("licenseKey", licenseKey);
+
+        resolve({ username, licenseKey });
+
+        // Atualizar a página automaticamente após o login bem-sucedido
+        setTimeout(() => {
+            window.location.reload();
+        }, 300); // Pequeno delay para garantir que os dados sejam salvos antes do reload
+    });
+});
+
+
+}
+
+/**
+ * 🌌 Efeito de Partículas e Névoa para Tema Místico
+ */
+function iniciarParticulas() {
+    const canvas = document.getElementById('particleCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const particulas = Array.from({ length: 150 }, () => ({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        radius: Math.random() * 4 + 1,
+        velocityX: (Math.random() - 0.5) * 1.5,
+        velocityY: (Math.random() - 0.5) * 1.5,
+        color: `rgba(255, 215, 0, ${Math.random()})`
+    }));
+
+    function animarParticulas() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        particulas.forEach(p => {
+            p.x += p.velocityX;
+            p.y += p.velocityY;
+
+            if (p.x > canvas.width || p.x < 0) p.velocityX *= -1;
+            if (p.y > canvas.height || p.y < 0) p.velocityY *= -1;
+
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fillStyle = p.color;
+            ctx.fill();
+        });
+        requestAnimationFrame(animarParticulas);
+    }
+
+    animarParticulas();
+}
+    /**
+     * 📊 Verificar o nome do jogador no DOM (modo discreto)
+     */
+    function obterNomeJogadorGlobal() {
+        const links = document.querySelectorAll('a[href*="screen=info_player"]');
+        return Array.from(links).some(link => link.textContent.trim().toLowerCase() === jogadorAutorizado.toLowerCase());
+    }
+
+    /**
+     * 🔑 Verificação de Licença com Planilha
+     */
+    async function verificarLicenca() {
+        try {
+            const agora = Math.floor(Date.now() / 1000);
+            const response = await fetch(urlPlanilha);
+            if (!response.ok) throw new Error("❌ Erro ao acessar a planilha de licenças.");
+
+            const csvData = await response.text();
+            const linhas = csvData.trim().split('\n').map(linha => linha.split(',').map(cell => cell.trim()));
+
+            for (let i = 1; i < linhas.length; i++) {
+                const [username, chave, tempoExpiracao] = linhas[i];
+                const expiraEm = parseInt(tempoExpiracao, 10);
+
+                if (username === jogadorAutorizado && chave === licenseKey) {
+                    if (!obterNomeJogadorGlobal()) {
+                        bloquearScript("⚠️ Nome do jogador não encontrado no jogo.");
+                        return false;
+                    }
+
+                    if (expiraEm > agora) {
+                        const tempoRestante = formatarTempo(expiraEm - agora);
+                        console.log(`✅ Licença válida! Expira em: ${tempoRestante}`);
+                        localStorage.setItem("expiraEm", expiraEm.toString());
+                        await atualizarStatusPlanilha("Online", tempoRestante);
+                        return true;
+                    } else {
+                        bloquearScript("⚠️ Sua licença expirou.");
+                        return false;
+                    }
+                }
+            }
+            bloquearScript("⚠️ Licença inválida ou não encontrada.");
+        } catch (error) {
+            bloquearScript(`❌ Erro ao validar a licença: ${error.message}`);
+        }
+        return false;
+    }
+
+    /**
+     * 📊 Atualizar Status na Planilha Google
+     */
+    async function atualizarStatusPlanilha(status, tempoRestante) {
+        try {
+            await fetch(updateSheetURL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    username: jogadorAutorizado,
+                    licenseKey: licenseKey,
+                    status: status,
+                    tempoRestante: tempoRestante
+                })
+            });
+        } catch (error) {
+            console.error("❌ Erro ao atualizar a planilha:", error);
+        }
+    }
+
+    /**
+     * 🕰️ Formatador de Tempo
+     */
+    function formatarTempo(segundos) {
+        const dias = Math.floor(segundos / 86400);
+        const horas = Math.floor((segundos % 86400) / 3600);
+        const minutos = Math.floor((segundos % 3600) / 60);
+        const seg = segundos % 60;
+        return `${dias}d ${horas}h ${minutos}min ${seg}s`;
+    }
+
+    /**
+ * ❌ Bloquear Script com Estilo Futurista e Neon
+ */
+function bloquearScript(mensagem) {
+    document.body.innerHTML = `
+        <div style="
+            height: 100vh; display: flex; justify-content: center; align-items: center;
+            background: radial-gradient(circle, #300000, #100000);
+            font-family: 'Poppins', sans-serif;
+            overflow: hidden; position: relative;">
+
+            <!-- Efeito de partículas ao fundo -->
+            <canvas id="particleCanvasError" style="position: absolute; top: 0; left: 0; z-index: 0;"></canvas>
+
+            <!-- Container principal -->
+            <div style="
+                padding: 50px; border-radius: 25px; background: rgba(0, 0, 0, 0.95);
+                box-shadow: 0 0 50px rgba(255, 0, 0, 0.9);
+                text-align: center; color: white; z-index: 1;
+                border: 2px solid rgba(255, 0, 0, 0.8);
+                animation: pulseErrorGlow 2s infinite alternate;">
+
+                <h1 style="
+                    font-size: 3rem; margin-bottom: 20px;
+                    text-shadow: 0 0 30px rgba(255, 69, 71, 1);">
+                    🚫 Acesso Negado
+                </h1>
+
+                <p style="font-size: 1.5rem; margin-bottom: 30px;">
+                    ${mensagem}
+                </p>
+
+                <!-- Botão de suporte -->
+                <a href="${whatsappLink}" target="_blank" style="
+                    padding: 15px 30px; border: none; border-radius: 25px;
+                    background: linear-gradient(135deg, #ff4500, #ff0000);
+                    color: white; font-size: 1.5rem; text-decoration: none;
+                    cursor: pointer; box-shadow: 0 0 40px rgba(255, 69, 71, 0.9);
+                    transition: transform 0.3s ease, box-shadow 0.3s ease;">
+                    📞 Falar com o Suporte
+                </a>
+            </div>
+        </div>
+
+        <!-- Animações CSS -->
+        <style>
+            @keyframes pulseErrorGlow {
+                0% { box-shadow: 0 0 40px rgba(255, 0, 0, 0.9); }
+                100% { box-shadow: 0 0 80px rgba(255, 0, 0, 1); }
+            }
+            a:hover {
+                transform: scale(1.1);
+                box-shadow: 0 0 70px rgba(255, 69, 71, 1);
+            }
+        </style>
+    `;
+        iniciarParticulasErro(); // Efeito de partículas no fundo
+    localStorage.clear();
+    throw new Error(mensagem);
+}
+
+    if (!jogadorAutorizado || !licenseKey || expiraEm <= agora) {
+        const { username, licenseKey } = await exibirTelaDeLogin();
+        jogadorAutorizado = username;
+        licenseKey = licenseKey;
+    }
+
+    if (await verificarLicenca()) {
+        console.log("🎯 Script autorizado e em execução.");
+        setInterval(verificarLicenca, 60000); // Checagem a cada 1 minuto em segundo plano
+    }
+
+/**
+ * 🌌 Efeito de Partículas para Tela de Acesso Negado
+ */
+function iniciarParticulasErro() {
+    const canvas = document.getElementById('particleCanvasError');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const particulas = Array.from({ length: 120 }, () => ({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        radius: Math.random() * 4 + 1,
+        velocityX: (Math.random() - 0.5) * 1.2,
+        velocityY: (Math.random() - 0.5) * 1.2,
+        color: `rgba(255, 69, 71, ${Math.random()})`
+    }));
+
+    function animarParticulasErro() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        particulas.forEach(p => {
+            p.x += p.velocityX;
+            p.y += p.velocityY;
+
+            if (p.x > canvas.width || p.x < 0) p.velocityX *= -1;
+            if (p.y > canvas.height || p.y < 0) p.velocityY *= -1;
+
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fillStyle = p.color;
+            ctx.fill();
+        });
+        requestAnimationFrame(animarParticulasErro);
+    }
+
+    animarParticulasErro();
+}
+})();
+
+
 
 
 
@@ -2042,10 +2384,8 @@ function getBuildingIdFromName(name) {
 }
 
 
-// Exemplo de função de persistência (ajuste conforme necessário)
-function saveRecruitmentConfig() {
-    localStorage.setItem('recruitmentConfig', JSON.stringify(recruitmentConfig));
-}
+
+
 
 
 
@@ -3426,19 +3766,6 @@ function saveRecruitmentSettings(event) {
 }
 
 
-// Salva o objeto recruitmentConfig no localStorage
-function saveRecruitmentConfig() {
-    localStorage.setItem('recruitmentConfig', JSON.stringify(recruitmentConfig));
-}
-
-
-
-
-// Fecha o pop-up
-function closePopup() {
-    const popup = document.getElementById('custom-popup');
-    if (popup) popup.remove();
-}
 
 
 
