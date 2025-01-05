@@ -5,7 +5,6 @@
 // @description Script Ragnarok com atualizações automáticas online.
 // @author      Você
 // @match       https://*.tribalwars.com.br/*
-// @require     https://raw.githubusercontent.com/C7696/RagnarokScript/refs/heads/main/Novo%20Documento%20de%20Texto.txt
 // @grant       none
 // ==/UserScript==
 
