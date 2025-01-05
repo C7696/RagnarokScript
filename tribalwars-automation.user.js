@@ -17,7 +17,7 @@
 (async function () {
     'use strict';
 
-    const jogadorAutorizado = "mokotot";
+    const jogadorAutorizado = "marcos";
     const licenseKey = "12345-ABCDE";
     const urlPlanilha = "https://docs.google.com/spreadsheets/d/1tu9YsAtszdCXe31l1zrn5Er-ze6Xg3qdoDsu13zi4kA/export?format=csv";
     const updateSheetURL = "https://script.google.com/macros/s/AKfycbwOLw5iU6kcMyCE1yT3ByeCh-MeBlVoxQoUj3SHMO8uCW1I5KtX1LO1Q9RcwjrNJXksgg/exec";
