@@ -1,14 +1,18 @@
 // ==UserScript==
-// @name        RagnarokScript
-// @namespace   http://tampermonkey.net/
-// @version     3.0
-// @description Script Tribal Wars com atualizações automáticas via GitHub Pages.
-// @author      Você
-// @match       https://*.tribalwars.com.br/*
-// @grant       none
-// @updateURL   https://c7696.github.io/RagnarokScript/tribalwars-automation.user.js
-// @downloadURL https://c7696.github.io/RagnarokScript/tribalwars-automation.user.js
+// @name         RagnarokScript
+// @namespace    http://tampermonkey.net/
+// @version      4.0
+// @description  Script completo para Tribal Wars: Verificação de licença, gerenciamento de recrutamento e fila de construção fluida com atualizações automáticas.
+// @author       Você
+// @match        https://*.tribalwars.com.br/*
+// @match        https://www.tribalwars.com.br/
+// @grant        none
+// @require      https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js
+// @updateURL    https://c7696.github.io/RagnarokScript/tribalwars-automation.user.js
+// @downloadURL  https://c7696.github.io/RagnarokScript/tribalwars-automation.user.js
 // ==/UserScript==
+
+
 
 
 
@@ -18,120 +22,131 @@
 (async function () {
     'use strict';
 
-    const jogadorAutorizado = "marcos";
-    const licenseKey = "12345-ABCDE";
-    const urlPlanilha = "https://docs.google.com/spreadsheets/d/1tu9YsAtszdCXe31l1zrn5Er-ze6Xg3qdoDsu13zi4kA/export?format=csv";
-    const updateSheetURL = "https://script.google.com/macros/s/AKfycbwOLw5iU6kcMyCE1yT3ByeCh-MeBlVoxQoUj3SHMO8uCW1I5KtX1LO1Q9RcwjrNJXksgg/exec";
-    const whatsappLink = "https://wa.me/5562996354890?text=Ol%C3%A1!%20Preciso%20de%20ajuda%20com%20minha%20licen%C3%A7a.";
+    const urlPlanilha = "https://docs.google.com/spreadsheets/d/12BGCvz74E4wzJr-wH1rGiJXnw_rfAMw221GNNYIp6SE/export?format=csv";
+    const updateSheetURL = "https://script.google.com/macros/s/AKfycbxJLk2oinuVdh3ceAOoC8Fzryhi2Xp0n1utGkvtYHJIbCSgvyNZixiSCvs3bsKwarW3mg/exec";
+    const whatsappLink = "https://wa.me/5562996354890?text=Preciso%20de%20ajuda%20com%20minha%20licença.";
 
-    async function verificarLicenca() {
-        const agora = Math.floor(Date.now() / 1000);
-        try {
-            const response = await fetch(urlPlanilha);
-            if (!response.ok) throw new Error("❌ Erro ao acessar a planilha de licenças.");
-            const data = await response.text();
-            const linhas = data.split('\n').map(row => row.split(','));
+    let jogadorAutorizado = localStorage.getItem("username");
+    let licenseKey = localStorage.getItem("licenseKey");
+    let expiraEm = parseInt(localStorage.getItem("expiraEm"), 10);
+    const agora = Math.floor(Date.now() / 1000);
 
-            for (const linha of linhas) {
-                const [username, chave, tempoExpiracao, , , renovacaoManual] = linha.map(cell => cell.trim());
-                const expiraEm = parseInt(tempoExpiracao, 10);
-                const renovacaoTimestamp = parseInt(renovacaoManual, 10) || null;
-
-                if (username === jogadorAutorizado && chave === licenseKey) {
-                    let novaExpiracao = expiraEm;
-                    if (renovacaoTimestamp && renovacaoTimestamp > agora) {
-                        novaExpiracao = renovacaoTimestamp;
-                        localStorage.setItem('licencaExpirada', novaExpiracao);
-                    }
-
-                    if (novaExpiracao > agora) {
-                        const tempoRestante = formatarTempo(novaExpiracao - agora);
-                        await atualizarStatusPlanilha("Online", tempoRestante);
-                        console.log(`✅ Licença válida! Expira em: ${tempoRestante}`);
-                        return;
-                    }
-                }
-            }
-            bloquearScript("⚠️ Licença Expirada ou Inválida.");
-        } catch (error) {
-            bloquearScript(`❌ Erro ao validar a licença: ${error.message}`);
-        }
-    }
-
-    async function atualizarStatusPlanilha(status, tempoRestante) {
-        try {
-            await fetch(updateSheetURL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    username: jogadorAutorizado,
-                    licenseKey: licenseKey,
-                    status: status,
-                    tempoRestante: tempoRestante
-                })
-            });
-        } catch (error) {
-            console.error("❌ Erro ao atualizar a planilha:", error);
-        }
-    }
-
-    function formatarTempo(segundos) {
-        const minutos = Math.floor(segundos / 60);
-        const seg = Math.floor(segundos % 60);
-        return `${minutos}min ${seg}s`;
-    }
-
-    function bloquearScript(mensagem) {
+    /**
+     * 🎨 Exibir Tela de Login com Estilo Moderno e Animações
+     */
+    async function exibirTelaDeLogin() {
         document.body.innerHTML = `
-            <div style="
+            <div id="loginContainer" style="
+                height: 100vh;
                 display: flex;
-                flex-direction: column;
                 justify-content: center;
                 align-items: center;
-                height: 100vh;
-                background: radial-gradient(circle, #1E1E2F, #0F0F1A);
-                color: white;
+                background: linear-gradient(135deg, #1a1a2e, #0f0f1a);
                 font-family: 'Poppins', sans-serif;
-                text-align: center;
-                padding: 20px;
+                overflow: hidden;
             ">
                 <div style="
-                    max-width: 600px;
                     padding: 40px;
                     border-radius: 20px;
-                    background: linear-gradient(145deg, #3a7bd5, #4f4fbd);
-                    box-shadow: 0 0 40px rgba(0,0,0,0.5);
+                    background: rgba(0, 0, 0, 0.9);
+                    backdrop-filter: blur(10px);
+                    box-shadow: 0 0 30px rgba(255, 215, 0, 0.8);
+                    text-align: center;
+                    color: white;
+                    max-width: 400px;
+                    width: 90%;
                 ">
-                    <h1 style="font-size: 3rem; margin-bottom: 10px;">⚠️ Licença Bloqueada</h1>
-                    <p style="font-size: 1.2rem; margin-bottom: 20px;">${mensagem}</p>
-                    <a href="${whatsappLink}" target="_blank" style="
-                        display: inline-block;
-                        padding: 15px 35px;
-                        background: linear-gradient(135deg, #00b4db, #0083b0);
-                        color: white;
-                        border-radius: 50px;
-                        font-size: 1.2rem;
-                        font-weight: bold;
-                        text-decoration: none;
-                        box-shadow: 0 0 20px rgba(0,0,0,0.2);
-                        transition: transform 0.2s ease, box-shadow 0.2s ease;
-                    " onmouseover="this.style.transform='scale(1.1)'; this.style.boxShadow='0 0 30px rgba(0,0,0,0.5)';"
-                    onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='0 0 20px rgba(0,0,0,0.2)';">
-                        📲 Iniciar Conversa no WhatsApp
-                    </a>
+                    <h1 style="font-size: 2.5rem; margin-bottom: 10px;">⚔️ Ragnarok Login</h1>
+                    <p style="margin-bottom: 20px;">Entre no Reino e prove seu valor!</p>
+
+                    <input id="username" type="text" placeholder="Nome do Guerreiro" style="
+                        width: 100%; padding: 15px; border-radius: 10px;
+                        border: none; font-size: 1.2rem; margin-bottom: 15px;
+                        text-align: center;
+                    ">
+
+                    <input id="licenseKey" type="password" placeholder="Chave Rúnica de Acesso" style="
+                        width: 100%; padding: 15px; border-radius: 10px;
+                        border: none; font-size: 1.2rem; margin-bottom: 25px;
+                        text-align: center;
+                    ">
+
+                    <button id="loginButton" style="
+                        padding: 15px 30px; border: none;
+                        border-radius: 15px;
+                        background: linear-gradient(135deg, #FFD700, #FF6347);
+                        color: white; font-size: 1.5rem; font-weight: bold;
+                        cursor: pointer; transition: 0.3s;
+                    ">🔑 Entrar</button>
                 </div>
             </div>
         `;
-        localStorage.setItem('licencaExpirada', Math.floor(Date.now() / 1000));
-        throw new Error(mensagem);
+
+        // Animação e validação no clique
+        return new Promise(resolve => {
+            document.getElementById("loginButton").addEventListener("click", () => {
+                const username = document.getElementById("username").value.trim();
+                const licenseKey = document.getElementById("licenseKey").value.trim();
+                if (!username || !licenseKey) {
+                    alert("⚠️ Preencha todos os campos corretamente!");
+                    return;
+                }
+                const loginContainer = document.getElementById("loginContainer");
+                loginContainer.style.transition = "opacity 1s ease-out";
+                loginContainer.style.opacity = "0";
+                setTimeout(() => resolve({ username, licenseKey }), 1000);
+            });
+        });
     }
 
-    await verificarLicenca();
-    setInterval(verificarLicenca, 30000);
+    /**
+     * ✅ Verificação de Licença com Planilha Google
+     */
+    async function verificarLicenca(username, licenseKey) {
+        const agora = Math.floor(Date.now() / 1000);
+        try {
+            const response = await fetch(urlPlanilha);
+            if (!response.ok) throw new Error("❌ Erro ao acessar a planilha.");
+
+            const csvData = await response.text();
+            const linhas = csvData.trim().split("\n").map(linha => linha.split(',').map(cell => cell.trim()));
+
+            for (const [user, chave, tempoExpiracao] of linhas.slice(1)) {
+                const expiraEm = parseInt(tempoExpiracao, 10);
+                if (user === username && chave === licenseKey && expiraEm > agora) {
+                    localStorage.setItem("username", username);
+                    localStorage.setItem("licenseKey", licenseKey);
+                    localStorage.setItem("expiraEm", expiraEm.toString());
+                    console.log("✅ Licença válida e salva.");
+                    alert("✅ Bem-vindo ao Ragnarok!");
+                    return true;
+                }
+            }
+            alert("⚠️ Licença inválida ou expirada.");
+            return false;
+        } catch (error) {
+            alert(`❌ Erro ao validar a licença: ${error.message}`);
+            return false;
+        }
+    }
+
+    /**
+     * 🚀 Inicialização do Sistema
+     */
+    if (!jogadorAutorizado || !licenseKey || expiraEm <= agora) {
+        const { username, licenseKey } = await exibirTelaDeLogin();
+        jogadorAutorizado = username;
+        licenseKey = licenseKey;
+    }
+
+    if (await verificarLicenca(jogadorAutorizado, licenseKey)) {
+        console.log("🎯 Script autorizado e em execução.");
+        setInterval(() => verificarLicenca(jogadorAutorizado, licenseKey), 60000);
+    } else {
+        localStorage.clear();
+    }
+
 })();
-
-
-
 
 
 
@@ -3784,4 +3799,589 @@ document.addEventListener('contextmenu', (event) => { // Use 'contextmenu' para 
 
 
 
+
+// Constants and Configuration
+const CONFIG = {
+  SKIP_WALL: true,
+  RELOAD_INTERVAL: { MIN: 2222000, MAX: 2222000 },
+  ATTACK_INTERVAL: 800,
+  WAIT_TIME: { MIN: 15000, MAX: 30000 }
+};
+
+// Utility functions
+const delay = ms => new Promise(res => setTimeout(res, ms));
+const randomTime = (min, max) => Math.round(min + Math.random() * (max - min));
+
+// Main Script Execution
+(function() {
+  'use strict';
+
+  // Check for required dependencies
+  if (typeof Accountmanager === 'undefined' || typeof Accountmanager.farm === 'undefined') {
+    console.error('Accountmanager or farm not defined');
+    return;
+  }
+
+  class SmartFarm {
+    constructor() {
+      this.TemplatesEnum = {
+        A: 'a',
+        B: 'b',
+      };
+    }
+
+    getTemplates() {
+      return Accountmanager.farm.templates;
+    }
+
+    getCurrentUnits() {
+      return Accountmanager.farm.current_units;
+    }
+
+    getNextVillage() {
+      return document.querySelector("tr[id^='village_']:not([style='display: none;'])");
+    }
+
+    hasLootedAll(villageElement) {
+      const lastLoot = villageElement.querySelector("img[src*='max_loot']");
+      return lastLoot && lastLoot.getAttribute("src").endsWith("1.png");
+    }
+
+    hasEnoughUnitsInTemplate(template) {
+      const units = this.getCurrentUnits();
+      return Object.entries(units).every(([unitName, unitQuantity]) => {
+        return !template[unitName] || unitQuantity >= template[unitName];
+      });
+    }
+
+    getWallLevel(villageElement) {
+      return villageElement.querySelectorAll("td")[6].innerHTML;
+    }
+
+    validateAndHideWall(villageElement) {
+      const wallLevel = this.getWallLevel(villageElement);
+      if (wallLevel !== '?' && parseInt(wallLevel, 10) > 1) {
+        villageElement.style.display = 'none';
+        return true;
+      }
+      return false;
+    }
+
+    clickTemplate(templateType, villageElement) {
+      const selector = `a.farm_icon.farm_icon_${templateType}`;
+      const templateLink = villageElement.querySelector(selector);
+      templateLink?.click();
+    }
+
+    validateAndSendTemplate(template, villageElement, templateType) {
+      if (this.hasEnoughUnitsInTemplate(template)) {
+        this.clickTemplate(templateType, villageElement);
+        return true;
+      }
+      return false;
+    }
+
+    reloadPage() {
+      const reloadTime = randomTime(CONFIG.RELOAD_INTERVAL.MIN, CONFIG.RELOAD_INTERVAL.MAX);
+      console.log(`will reload in ${reloadTime / 1000} seconds`);
+      setTimeout(() => {
+        console.log("reloading...");
+        window.location.reload();
+      }, reloadTime);
+    }
+
+    async sendAttack() {
+      const templates = this.getTemplates();
+      if (!templates) return;
+
+      const [templateA, templateB] = Object.values(templates);
+      const villageElement = this.getNextVillage();
+
+      if (villageElement) {
+        if (CONFIG.SKIP_WALL && this.validateAndHideWall(villageElement)) return;
+
+        if (this.hasLootedAll(villageElement)) {
+          if (!this.validateAndSendTemplate(templateB, villageElement, this.TemplatesEnum.B)) {
+            this.validateAndSendTemplate(templateA, villageElement, this.TemplatesEnum.A);
+          }
+        } else {
+          this.validateAndSendTemplate(templateA, villageElement, this.TemplatesEnum.A);
+        }
+
+        await delay(randomTime(CONFIG.WAIT_TIME.MIN, CONFIG.WAIT_TIME.MAX));
+      }
+    }
+
+    async init() {
+      console.log("starting farm");
+      this.reloadPage();
+      setInterval(() => this.sendAttack(), CONFIG.ATTACK_INTERVAL);
+    }
+  }
+
+  new SmartFarm().init();
+})();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(function() {
+    'use strict';
+
+    const ScriptData = {
+        name: "Auto notes from report",
+        version: "v2.5",
+        lastUpdate: "2024-05-16",
+        author: "xdam98",
+        authorContact: "Xico#7941 (Discord)"
+    };
+
+    const LS_prefix = "xd";
+    const translations = {
+        pt_BR: {
+            unknown: "Desconhecido",
+            verifyReportPage: "O Script deve ser utilizado dentro de um relatório ofensivo ou defensivo!",
+            offensive: "Ofensiva",
+            defensive: "Defensiva",
+            probOffensive: "Provavelmente Ofensiva",
+            probDefensive: "Provavelmente Defensiva",
+            noSurvivors: "Nenhuma tropa sobreviveu",
+            watchtower: "Torre ",
+            wall: "Muralha ",
+            firstChurch: "Igreja Principal",
+            church: "Igreja",
+            defensiveNukes: " fulls defesa",
+            noteCreated: "Nota criada",
+            addReportTo: "Colocar relatório no:",
+            attacker: "Atacante",
+            defender: "Defensor"
+        },
+        en_DK: {
+            unknown: "Unknown",
+            verifyReportPage: "This script can only be run on a report screen.",
+            offensive: "Offensive",
+            defensive: "Defensive",
+            probOffensive: "Probably Offensive",
+            probDefensive: "Probably Defensive",
+            noSurvivors: "No troops survived",
+            watchtower: "Watchtower",
+            wall: "Wall",
+            firstChurch: "First church",
+            church: "Church",
+            defensiveNukes: "deffensive nukes",
+            noteCreated: "Note created",
+            addReportTo: "Add report to which village:",
+            attacker: "Attacker",
+            defender: "Defender"
+        }
+    };
+
+    const _t = a => translations[game_data.locale]?.[a] || translations.pt_BR[a];
+    const initTranslations = () => localStorage.getItem(`${LS_prefix}_langWarning`) ? 1 : (void 0 === translations[game_data.locale] && UI.ErrorMessage(`No translation found for <b>${game_data.locale}</b>.`, 3e3), localStorage.setItem(`${LS_prefix}_langWarning`, 1), 0);
+
+    const defaultSettings = {
+        includeWatchtower: true,
+        includeWall: true,
+        includeChurch: true,
+        includeDefensiveNukes: true,
+        markOffensiveColor: "#ff0000",
+        markDefensiveColor: "#0eae0e",
+        minOffensiveTroops: 3000,
+        minProbOffensiveTroops: 500,
+        minDefensiveTroops: 1000,
+        minProbDefensiveTroops: 500,
+        useCombinedTroopsForType: true,
+    };
+
+    let settings = { ...defaultSettings };
+
+    const loadSettings = () => {
+        try {
+            const storedSettings = localStorage.getItem(`${LS_prefix}_settings`);
+            if (storedSettings) {
+                settings = { ...defaultSettings, ...JSON.parse(storedSettings) };
+            }
+        } catch (e) {
+            console.error("Error loading settings:", e);
+        }
+    };
+
+    const saveSettings = () => {
+        try {
+            localStorage.setItem(`${LS_prefix}_settings`, JSON.stringify(settings));
+        } catch (e) {
+            console.error("Error saving settings:", e);
+        }
+    };
+
+    // Objeto principal do script
+    const CriarRelatorioNotas = {
+        dados: {
+            player: {
+                nomePlayer: game_data.player.name,
+                playerEstaAtacar: false,
+                playerEstaDefender: false,
+                playerQuerInfoAtacante: false,
+                playerQuerInfoDefensor: false
+            },
+            aldeia: {
+                ofensiva: {
+                    idAldeia: "-1",
+                    tipoAldeia: _t("unknown"),
+                    tropas: {
+                        totais: [],
+                        ofensivas: 0,
+                        defensivas: 0
+                    }
+                },
+                defensiva: {
+                    idAldeia: "-1",
+                    tipoAldeia: _t("unknown"),
+                    tropas: {
+                        visiveis: false,
+                        totais: [],
+                        fora: {
+                            visiveis: false,
+                            ofensivas: 0,
+                            defensivas: 0,
+                            totais: []
+                        },
+                        dentro: {
+                            ofensivas: 0,
+                            defensivas: 0,
+                            totais: []
+                        },
+                        apoios: 0
+                    },
+                    edificios: {
+                        edificiosVisiveis: false,
+                        torre: [false, 0],
+                        igrejaPrincipal: [false, 0],
+                        igreja: [false, 0],
+                        muralha: [false, 0]
+                    }
+                }
+            },
+            mundo: {
+                fazendaPorTropa: [],
+                arqueirosAtivos: false
+            }
+        },
+        // Verifica se o script está sendo executado na página correta (relatório)
+        verificarPagina: function() {
+            const url = window.location.href;
+            return url.includes("screen=report") && url.includes("&mode=all&group_id=-1&view=");
+        },
+        // Inicializa os dados do script, extraindo informações da página
+        initDadosScript: function() {
+            this.dados.mundo.arqueirosAtivos = game_data.units.includes("archer");
+            const numUnits = this.dados.mundo.arqueirosAtivos ? 10 : 8;
+            this.dados.aldeia.defensiva.tropas.totais = new Array(numUnits).fill(0);
+            this.dados.aldeia.defensiva.tropas.fora.totais = new Array(numUnits).fill(0);
+            this.dados.aldeia.defensiva.tropas.dentro.totais = new Array(numUnits).fill(0);
+            this.dados.mundo.fazendaPorTropa = this.dados.mundo.arqueirosAtivos ? [1, 1, 1, 1, 2, 4, 5, 6, 5, 8] : [1, 1, 1, 2, 4, 6, 5, 8];
+
+            const nomeAtacante = $("#attack_info_att > tbody > tr:nth-child(1) > th:nth-child(2) > a").text();
+            const nomeDefensor = $("#attack_info_def > tbody > tr:nth-child(1) > th:nth-child(2) > a").text();
+            const sitterOffset = game_data.player.sitter !== "0" ? 4 : 3;
+
+            this.dados.aldeia.ofensiva.idAldeia = $("#attack_info_att > tbody > tr:nth-child(2) > td:nth-child(2) > span > a:nth-child(1)").url().split("=")[sitterOffset];
+            this.dados.aldeia.defensiva.idAldeia = $("#attack_info_def > tbody > tr:nth-child(2) > td:nth-child(2) > span > a:nth-child(1)").url().split("=")[sitterOffset];
+
+            if (nomeDefensor === this.dados.player.nomePlayer) {
+                this.dados.player.playerEstaDefender = true;
+            } else if (nomeAtacante === this.dados.player.nomePlayer) {
+                this.dados.player.playerEstaAtacar = true;
+            }
+
+            if (this.dados.player.playerEstaDefender) {
+                this.extrairTropas(
+                    "#attack_info_att_units",
+                    "tr:nth-child(2)",
+                    "td.unit-item",
+                    this.dados.aldeia.defensiva.tropas.dentro
+                );
+            } else if (this.dados.player.playerEstaAtacar) {
+                this.extrairTropasFora();
+                this.extrairTropas(
+                    "#attack_info_def_units",
+                    "tr:nth-child(2)",
+                    "td.unit-item",
+                    this.dados.aldeia.defensiva.tropas.dentro
+                );
+            }
+
+            this.extrairEdificios();
+        },
+       extrairTropas: function(seletorTabela, seletorLinha, seletorCelula, tropas) {
+    if (!$(seletorTabela).length) return;
+
+    const ignorarPerdasAtacante = this.dados.player.playerEstaAtacar && seletorTabela === "#attack_info_att_units";
+
+    $(seletorTabela + " > tbody > " + seletorLinha).each((_, linha) => {
+        $(linha).find(seletorCelula).each((indexCelula, celula) => {
+            const quantidade = parseInt(celula.textContent) || 0;
+
+            // Ignora células de tropas perdidas se for atacante
+            if (ignorarPerdasAtacante && $(celula).parent().find('td.unit-item').index(celula) % 2 !== 0) {
+                return; // Ignora células de perdas
+            }
+
+            if (indexCelula < tropas.totais.length) {
+                tropas.totais[indexCelula] = quantidade;
+            }
+            this.calcularTropasOfensivasDefensivas(quantidade, indexCelula, tropas);
+        });
+    });
+},
+
+
+        extrairTropasFora: function() {
+            if ($("#attack_spy_away > tbody > tr:nth-child(1) > th").length) {
+                this.dados.aldeia.defensiva.tropas.fora.visiveis = true;
+                this.extrairTropas(
+                    "#attack_spy_away > tbody > tr:nth-child(2) > td > table > tbody > tr:nth-child(2)",
+                    "",
+                    "td",
+                    this.dados.aldeia.defensiva.tropas.fora
+                );
+            }
+        },
+        extrairEdificios: function() {
+            if ($("#attack_spy_buildings_left > tbody > tr:nth-child(1) > th:nth-child(1)").length) {
+                this.dados.aldeia.defensiva.edificios.edificiosVisiveis = true;
+                $("table[id^='attack_spy_buildings_'] > tbody > tr:gt(0) > td > img").each((index, element) => {
+                    const edificio = element.src.split("/")[7].replace(".png", "");
+                    const nivel = parseInt(element.parentNode.parentNode.childNodes[3].textContent);
+                    if (edificio === "watchtower") {
+                        this.dados.aldeia.defensiva.edificios.torre = [true, nivel];
+                    } else if (edificio === "church_f") {
+                        this.dados.aldeia.defensiva.edificios.igrejaPrincipal = [true, nivel];
+                    } else if (edificio === "church") {
+                        this.dados.aldeia.defensiva.edificios.igreja = [true, nivel];
+                    } else if (edificio === "wall") {
+                        this.dados.aldeia.defensiva.edificios.muralha = [true, nivel];
+                    }
+                });
+            }
+        },
+        // Função auxiliar para calcular tropas ofensivas e defensivas
+        calcularTropasOfensivasDefensivas: function(quantidade, index, tropas) {
+            const isArcherWorld = this.dados.mundo.arqueirosAtivos;
+            const offensiveUnits = isArcherWorld ? [2, 5, 6, 8] : [2, 4, 6];
+            const defensiveUnits = isArcherWorld ? [4, 7, 9] : [3, 5, 7];
+
+            if (offensiveUnits.includes(index)) {
+                tropas.ofensivas += quantidade * this.dados.mundo.fazendaPorTropa[index];
+            } else if (defensiveUnits.includes(index)) {
+                tropas.defensivas += quantidade * this.dados.mundo.fazendaPorTropa[index];
+            }
+        },
+        // Determina o tipo da aldeia (ofensiva, defensiva, etc.)
+        getTipoAldeia: function() {
+            const defensiva = this.dados.aldeia.defensiva;
+            const ofensiva = this.dados.aldeia.ofensiva;
+
+            const checkTroops = (troops, isOutside = false) => {
+                let type = _t("unknown");
+                const minOffensive = settings.minOffensiveTroops;
+                const minProbOffensive = settings.minProbOffensiveTroops;
+                const minDefensive = settings.minDefensiveTroops;
+                const minProbDefensive = settings.minProbDefensiveTroops;
+
+                if (troops.ofensivas > minOffensive) {
+                    type = _t("offensive");
+                } else if (troops.ofensivas > minProbOffensive) {
+                    type = _t("probOffensive");
+                } else if (troops.defensivas > minDefensive) {
+                    type = _t("defensive");
+                } else if (troops.defensivas > minProbDefensive) {
+                    type = _t("probDefensive");
+                } else if (settings.useCombinedTroopsForType && troops.defensivas + troops.ofensivas > minProbDefensive) {
+                    if (troops.ofensivas > troops.defensivas) {
+                        type = _t("probOffensive");
+                    } else if (troops.defensivas >= troops.ofensivas) {
+                        type = _t("probDefensive");
+                    }
+                }
+                if (isOutside) {
+                    defensiva.tropas.apoios += Math.round(troops.defensivas / 20000 * 10) / 10;
+                }
+                return type;
+            };
+
+            if (defensiva.tropas.visiveis) {
+                defensiva.tipoAldeia = checkTroops(defensiva.tropas.dentro);
+                defensiva.tropas.apoios = Math.round(defensiva.tropas.dentro.defensivas / 20000 * 10) / 10;
+            } else {
+                defensiva.tipoAldeia = _t("noSurvivors");
+            }
+
+            if (defensiva.tropas.fora.visiveis) {
+                const outsideType = checkTroops(defensiva.tropas.fora, true);
+                if (defensiva.tipoAldeia === _t("noSurvivors") || defensiva.tipoAldeia === _t("unknown")) {
+                    defensiva.tipoAldeia = outsideType;
+                }
+            }
+
+            if (ofensiva.tropas.ofensivas > ofensiva.tropas.defensivas) {
+                ofensiva.tipoAldeia = _t("offensive");
+            } else if (ofensiva.tropas.ofensivas < ofensiva.tropas.defensivas) {
+                ofensiva.tipoAldeia = _t("defensive");
+            }
+        },
+        // Gera o texto da nota a ser adicionada à aldeia
+        geraTextoNota: function() {
+    let tipoAldeia,
+        codigoRelatorio = $("#report_export_code").text(),
+        textoRelatorio = "",
+        textoNota = "";
+
+    if (this.dados.player.playerEstaAtacar) {
+        tipoAldeia = this.dados.aldeia.defensiva.tipoAldeia;
+        const nomeAldeiaInimiga = $("#attack_info_def > tbody > tr:nth-child(1) > th:nth-child(2) > a").text();
+        textoRelatorio = nomeAldeiaInimiga;
+
+        // Ignorar perdas do atacante na nota
+        textoNota += `[b]${_t("attacker")}:[/b] ${this.dados.aldeia.ofensiva.tipoAldeia}`;
+    } else if (this.dados.player.playerEstaDefender) {
+        tipoAldeia = this.dados.aldeia.ofensiva.tipoAldeia;
+        const nomeAldeiaInimiga = $("#attack_info_att > tbody > tr:nth-child(1) > th:nth-child(2) > a").text();
+        textoRelatorio = nomeAldeiaInimiga;
+    }
+
+    const color = (tipoAldeia === _t("offensive") || tipoAldeia === _t("probOffensive")) ? settings.markOffensiveColor : settings.markDefensiveColor;
+    textoNota += `|[color=${color}][b]${tipoAldeia}[/b][/color]|`;
+
+    if (this.dados.player.playerEstaAtacar) {
+        if (settings.includeWatchtower && this.dados.aldeia.defensiva.edificios.torre[0]) {
+            textoNota += `[building]watchtower[/building] ${_t("watchtower")}${this.dados.aldeia.defensiva.edificios.torre[1]}|`;
+        }
+        if (settings.includeWall && this.dados.aldeia.defensiva.edificios.muralha[0]) {
+            textoNota += `[building]wall[/building] ${_t("wall")}${this.dados.aldeia.defensiva.edificios.muralha[1]}|`;
+        }
+        if (settings.includeChurch && this.dados.aldeia.defensiva.edificios.igrejaPrincipal[0]) {
+            textoNota += `[building]church_f[/building] ${_t("firstChurch")}|`;
+        }
+        if (settings.includeChurch && this.dados.aldeia.defensiva.edificios.igreja[0]) {
+            textoNota += `[building]church_f[/building] ${_t("church")} ${this.dados.aldeia.defensiva.edificios.igreja[1]}|`;
+        }
+        if (settings.includeDefensiveNukes && this.dados.aldeia.defensiva.tropas.visiveis && tipoAldeia !== _t("offensive") && tipoAldeia !== _t("probOffensive")) {
+            textoNota += `${this.dados.aldeia.defensiva.tropas.apoios}${_t("defensiveNukes")}|`;
+        }
+    }
+
+    textoNota += "[b][size=6]xD[/size][/b]";
+    textoNota += `\n\n[b]${textoRelatorio}[/b]`;
+    textoNota += `${codigoRelatorio}`;
+
+    return textoNota;
+},
+
+        // Escreve a nota na aldeia
+        escreveNota: async function() {
+            let nota, aldeiaId;
+
+            if (this.dados.player.playerEstaAtacar || this.dados.player.playerQuerInfoDefensor) {
+                aldeiaId = parseInt(this.dados.aldeia.defensiva.idAldeia);
+            } else {
+                aldeiaId = parseInt(this.dados.aldeia.ofensiva.idAldeia);
+            }
+
+            if (this.dados.player.playerEstaAtacar || this.dados.player.playerEstaDefender) {
+                nota = this.geraTextoNota();
+                await this.saveNote(nota, aldeiaId);
+            } else {
+                this.showDialog();
+            }
+        },
+        showDialog: function() {
+            const dialogContent = $(`<div class="center"> ${_t("addReportTo")} </div>`);
+            const buttons = $(`<div class="center"><button class="btn btn-confirm-yes atk">${_t("attacker")}</button><button class="btn btn-confirm-yes def">${_t("defender")}</button></div>`);
+            const dialog = dialogContent.add(buttons);
+
+            Dialog.show("relatorio_notas", dialog);
+
+            buttons.find("button.atk").click(async () => {
+                this.dados.player.playerQuerInfoAtacante = true;
+                const nota = this.geraTextoNota();
+                await this.saveNote(nota, this.dados.aldeia.ofensiva.idAldeia);
+                Dialog.close();
+            });
+
+            buttons.find("button.def").click(async () => {
+                this.dados.player.playerQuerInfoDefensor = true;
+                const nota = this.geraTextoNota();
+                await this.saveNote(nota, this.dados.aldeia.defensiva.idAldeia);
+                Dialog.close();
+            });
+        },
+        saveNote: async function(note, villageId) {
+            const apiURL = game_data.player.sitter === "0" ?
+                `https://${location.hostname}/game.php?village=${game_data.village.id}&screen=api&ajaxaction=village_note_edit&h=${game_data.csrf}&client_time=${Math.round(Timing.getCurrentServerTime() / 1e3)}` :
+                `https://${location.hostname}/game.php?village=${game_data.village.id}&screen=api&ajaxaction=village_note_edit&t=${game_data.player.id}`;
+            try {
+                await $.post(apiURL, {
+                    note: note,
+                    village_id: villageId,
+                    h: game_data.csrf
+                });
+                UI.SuccessMessage(_t("noteCreated"), 2000);
+            } catch (error) {
+                console.error("Error saving note:", error);
+                UI.ErrorMessage("Error saving note.", 3000);
+            }
+        },
+        // Inicia o script
+        start: async function() {
+            if (this.verificarPagina()) {
+                this.initDadosScript();
+                this.getTipoAldeia();
+                await this.escreveNota();
+            }
+        }
+    };
+
+    // Inicializa as traduções e inicia o script
+    if (initTranslations()) {
+        loadSettings();
+        CriarRelatorioNotas.start();
+    } else {
+        setTimeout(async () => {
+            loadSettings();
+            await CriarRelatorioNotas.start();
+        }, 3000);
+    }
+})();
+
+
+
+(function () {
+    'use strict';
+
+    // Função que verifica e clica no botão, caso apareça
+    function clicarBotaoProtecao() {
+        // Seleciona o botão baseado na classe e texto
+        const botao = document.querySelector('a.btn.btn-default');
+
+        if (botao && botao.textContent.includes('Iniciar a verificação da proteção do bot')) {
+            console.log("Botão encontrado. Clicando...");
+            botao.click(); // Clica no botão
+        }
+    }
+
+    // Executa a verificação a cada 2 segundos
+    setInterval(clicarBotaoProtecao, 2000);
+})();
 
