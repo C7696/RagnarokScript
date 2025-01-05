@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        Tribal Wars Automation
 // @namespace   http://tampermonkey.net/
-// @version     3.0
+// @version     3.1
 // @description Script para Tribal Wars com atualizações automáticas do GitHub.
 // @author      Você
 // @match       https://*.tribalwars.com.br/*
