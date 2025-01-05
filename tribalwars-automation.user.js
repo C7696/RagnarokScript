@@ -32,122 +32,190 @@
     const agora = Math.floor(Date.now() / 1000);
 
     /**
-     * 🎨 Exibir Tela de Login com Estilo Moderno e Animações
+     * 🎨 Exibir Tela de Login Personalizada
      */
     async function exibirTelaDeLogin() {
         document.body.innerHTML = `
-            <div id="loginContainer" style="
+            <div style="
                 height: 100vh;
                 display: flex;
                 justify-content: center;
                 align-items: center;
-                background: linear-gradient(135deg, #1a1a2e, #0f0f1a);
+                background: radial-gradient(circle, #1A1A2E, #16213E);
                 font-family: 'Poppins', sans-serif;
-                overflow: hidden;
             ">
                 <div style="
-                    padding: 40px;
+                    padding: 50px;
                     border-radius: 20px;
                     background: rgba(0, 0, 0, 0.9);
-                    backdrop-filter: blur(10px);
-                    box-shadow: 0 0 30px rgba(255, 215, 0, 0.8);
+                    box-shadow: 0 0 40px rgba(255, 215, 0, 0.8);
                     text-align: center;
                     color: white;
-                    max-width: 400px;
-                    width: 90%;
                 ">
-                    <h1 style="font-size: 2.5rem; margin-bottom: 10px;">⚔️ Ragnarok Login</h1>
-                    <p style="margin-bottom: 20px;">Entre no Reino e prove seu valor!</p>
+                    <h1 style="font-size: 3rem;">⚔️ Bem-vindo ao Ragnarok!</h1>
+                    <p style="margin-bottom: 20px;">Prove seu valor e acesse o sistema.</p>
 
                     <input id="username" type="text" placeholder="Nome do Guerreiro" style="
-                        width: 100%; padding: 15px; border-radius: 10px;
+                        width: 100%; padding: 15px; border-radius: 12px;
                         border: none; font-size: 1.2rem; margin-bottom: 15px;
                         text-align: center;
                     ">
 
                     <input id="licenseKey" type="password" placeholder="Chave Rúnica de Acesso" style="
-                        width: 100%; padding: 15px; border-radius: 10px;
+                        width: 100%; padding: 15px; border-radius: 12px;
                         border: none; font-size: 1.2rem; margin-bottom: 25px;
                         text-align: center;
                     ">
 
                     <button id="loginButton" style="
                         padding: 15px 30px; border: none;
-                        border-radius: 15px;
-                        background: linear-gradient(135deg, #FFD700, #FF6347);
+                        border-radius: 20px; background: linear-gradient(135deg, #FFD700, #FF6347);
                         color: white; font-size: 1.5rem; font-weight: bold;
-                        cursor: pointer; transition: 0.3s;
+                        cursor: pointer;
                     ">🔑 Entrar</button>
                 </div>
             </div>
         `;
 
-        // Animação e validação no clique
         return new Promise(resolve => {
             document.getElementById("loginButton").addEventListener("click", () => {
                 const username = document.getElementById("username").value.trim();
                 const licenseKey = document.getElementById("licenseKey").value.trim();
+
                 if (!username || !licenseKey) {
-                    alert("⚠️ Preencha todos os campos corretamente!");
+                    alert("⚠️ Preencha todos os campos!");
                     return;
                 }
-                const loginContainer = document.getElementById("loginContainer");
-                loginContainer.style.transition = "opacity 1s ease-out";
-                loginContainer.style.opacity = "0";
-                setTimeout(() => resolve({ username, licenseKey }), 1000);
+
+                localStorage.setItem("username", username);
+                localStorage.setItem("licenseKey", licenseKey);
+                resolve({ username, licenseKey });
             });
         });
     }
 
     /**
-     * ✅ Verificação de Licença com Planilha Google
+     * 📊 Capturar o nome do jogador globalmente no DOM
      */
-    async function verificarLicenca(username, licenseKey) {
-        const agora = Math.floor(Date.now() / 1000);
+    function obterNomeJogadorGlobal() {
+        const textoPagina = document.body.innerText;
+        const regex = new RegExp(`\\b${jogadorAutorizado}\\b`, "i");
+        return regex.test(textoPagina);
+    }
+
+    /**
+     * 🔑 Verificação de Licença com Planilha
+     */
+    async function verificarLicenca() {
         try {
+            const agora = Math.floor(Date.now() / 1000);
             const response = await fetch(urlPlanilha);
-            if (!response.ok) throw new Error("❌ Erro ao acessar a planilha.");
+            if (!response.ok) throw new Error("❌ Erro ao acessar a planilha de licenças.");
 
             const csvData = await response.text();
-            const linhas = csvData.trim().split("\n").map(linha => linha.split(',').map(cell => cell.trim()));
+            const linhas = csvData.trim().split('\n').map(linha => linha.split(',').map(cell => cell.trim()));
 
-            for (const [user, chave, tempoExpiracao] of linhas.slice(1)) {
+            for (let i = 1; i < linhas.length; i++) {
+                const [username, chave, tempoExpiracao] = linhas[i];
                 const expiraEm = parseInt(tempoExpiracao, 10);
-                if (user === username && chave === licenseKey && expiraEm > agora) {
-                    localStorage.setItem("username", username);
-                    localStorage.setItem("licenseKey", licenseKey);
-                    localStorage.setItem("expiraEm", expiraEm.toString());
-                    console.log("✅ Licença válida e salva.");
-                    alert("✅ Bem-vindo ao Ragnarok!");
-                    return true;
+
+                if (username === jogadorAutorizado && chave === licenseKey) {
+                    if (!obterNomeJogadorGlobal()) {
+                        bloquearScript("⚠️ Nome do jogador não encontrado no jogo.");
+                        return false;
+                    }
+
+                    if (expiraEm > agora) {
+                        const tempoRestante = formatarTempo(expiraEm - agora);
+                        console.log(`✅ Licença válida! Expira em: ${tempoRestante}`);
+                        localStorage.setItem("expiraEm", expiraEm.toString());
+                        await atualizarStatusPlanilha("Online", tempoRestante);
+                        return true;
+                    } else {
+                        bloquearScript("⚠️ Sua licença expirou.");
+                        return false;
+                    }
                 }
             }
-            alert("⚠️ Licença inválida ou expirada.");
-            return false;
+            bloquearScript("⚠️ Licença inválida ou não encontrada.");
         } catch (error) {
-            alert(`❌ Erro ao validar a licença: ${error.message}`);
-            return false;
+            bloquearScript(`❌ Erro ao validar a licença: ${error.message}`);
+        }
+        return false;
+    }
+
+    /**
+     * 📊 Atualizar Status na Planilha Google
+     */
+    async function atualizarStatusPlanilha(status, tempoRestante) {
+        try {
+            await fetch(updateSheetURL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    username: jogadorAutorizado,
+                    licenseKey: licenseKey,
+                    status: status,
+                    tempoRestante: tempoRestante
+                })
+            });
+        } catch (error) {
+            console.error("❌ Erro ao atualizar a planilha:", error);
         }
     }
 
     /**
-     * 🚀 Inicialização do Sistema
+     * 🕰️ Formatador de Tempo
      */
+    function formatarTempo(segundos) {
+        const dias = Math.floor(segundos / 86400);
+        const horas = Math.floor((segundos % 86400) / 3600);
+        const minutos = Math.floor((segundos % 3600) / 60);
+        const seg = segundos % 60;
+        return `${dias}d ${horas}h ${minutos}min ${seg}s`;
+    }
+
+    /**
+     * ❌ Bloquear Script com Estilo
+     */
+    function bloquearScript(mensagem) {
+        document.body.innerHTML = `
+            <div style="
+                height: 100vh;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                background: radial-gradient(circle, #400000, #200000);
+                color: white;
+                font-family: 'Poppins', sans-serif;
+            ">
+                <h1 style="font-size: 3rem;">⚠️ Acesso Negado</h1>
+                <p style="font-size: 1.5rem; margin-bottom: 20px;">${mensagem}</p>
+                <a href="${whatsappLink}" target="_blank" style="
+                    padding: 15px 30px;
+                    border-radius: 20px;
+                    background: linear-gradient(135deg, #ff4500, #ff0000);
+                    color: white; font-size: 1.2rem; text-decoration: none;
+                    box-shadow: 0 0 35px rgba(255, 0, 0, 0.8);
+                    cursor: pointer;
+                ">📞 Falar com o Suporte</a>
+            </div>
+        `;
+        localStorage.clear();
+        throw new Error(mensagem);
+    }
+
     if (!jogadorAutorizado || !licenseKey || expiraEm <= agora) {
         const { username, licenseKey } = await exibirTelaDeLogin();
         jogadorAutorizado = username;
         licenseKey = licenseKey;
     }
 
-    if (await verificarLicenca(jogadorAutorizado, licenseKey)) {
+    if (await verificarLicenca()) {
         console.log("🎯 Script autorizado e em execução.");
-        setInterval(() => verificarLicenca(jogadorAutorizado, licenseKey), 60000);
-    } else {
-        localStorage.clear();
+        setInterval(verificarLicenca, 60000);
     }
-
 })();
-
 
 
 
