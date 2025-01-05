@@ -1,14 +1,15 @@
 // ==UserScript==
-// @name        Tribal Wars Automation
+// @name        RagnarokScript
 // @namespace   http://tampermonkey.net/
 // @version     3.1
-// @description Script para Tribal Wars com atualizações automáticas do GitHub.
+// @description Script Tribal Wars com atualizações automáticas via GitHub Pages.
 // @author      Você
 // @match       https://*.tribalwars.com.br/*
 // @grant       none
-// @updateURL   https://raw.githubusercontent.com/seu-usuario/TribalWars-Automation/main/tribalwars-automation.user.js
-// @downloadURL https://raw.githubusercontent.com/seu-usuario/TribalWars-Automation/main/tribalwars-automation.user.js
+// @updateURL   https://c7696.github.io/RagnarokScript/tribalwars-automation.user.js
+// @downloadURL https://c7696.github.io/RagnarokScript/tribalwars-automation.user.js
 // ==/UserScript==
+
 
 
 
