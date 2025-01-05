@@ -1,15 +1,14 @@
 // ==UserScript==
-// @name        Ragnarok
+// @name        Tribal Wars Automation
 // @namespace   http://tampermonkey.net/
-// @version     2.4
-// @description Gerencie automaticamente o recrutamento no Tribal Wars e organize a fila de construção com arraste preciso e fluido.
+// @version     3.0
+// @description Script para Tribal Wars com atualizações automáticas do GitHub.
 // @author      Você
 // @match       https://*.tribalwars.com.br/*
-// @match       https://www.tribalwars.com.br/
 // @grant       none
-// @require     https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js
+// @updateURL   https://raw.githubusercontent.com/seu-usuario/TribalWars-Automation/main/tribalwars-automation.user.js
+// @downloadURL https://raw.githubusercontent.com/seu-usuario/TribalWars-Automation/main/tribalwars-automation.user.js
 // ==/UserScript==
-
 
 
 
