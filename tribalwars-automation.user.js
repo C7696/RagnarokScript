@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        RagnarokScript
 // @namespace   http://tampermonkey.net/
-// @version     3.1
+// @version     3.0
 // @description Script Tribal Wars com atualizações automáticas via GitHub Pages.
 // @author      Você
 // @match       https://*.tribalwars.com.br/*
