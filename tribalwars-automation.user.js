@@ -176,46 +176,54 @@ function iniciarParticulas() {
         return Array.from(links).some(link => link.textContent.trim().toLowerCase() === jogadorAutorizado.toLowerCase());
     }
 
-    /**
-     * 🔑 Verificação de Licença com Planilha
-     */
-    async function verificarLicenca() {
-        try {
-            const agora = Math.floor(Date.now() / 1000);
-            const response = await fetch(urlPlanilha);
-            if (!response.ok) throw new Error("❌ Erro ao acessar a planilha de licenças.");
+   /**
+ * 🔑 Verificação de Licença com Limpeza de Histórico Corrigida
+ */
+async function verificarLicenca() {
+    try {
+        const agora = Math.floor(Date.now() / 1000); // Tempo atual em segundos
+        const response = await fetch(urlPlanilha);
+        if (!response.ok) throw new Error("❌ Erro ao acessar a planilha de licenças.");
 
-            const csvData = await response.text();
-            const linhas = csvData.trim().split('\n').map(linha => linha.split(',').map(cell => cell.trim()));
+        const csvData = await response.text();
+        const linhas = csvData.trim().split('\n').map(linha => linha.split(',').map(cell => cell.trim()));
 
-            for (let i = 1; i < linhas.length; i++) {
-                const [username, chave, tempoExpiracao] = linhas[i];
-                const expiraEm = parseInt(tempoExpiracao, 10);
+        for (let i = 1; i < linhas.length; i++) {
+            const [username, chave, tempoExpiracao] = linhas[i];
+            const expiraEm = parseInt(tempoExpiracao, 10);  // Assumindo que os valores estão em segundos
 
-                if (username === jogadorAutorizado && chave === licenseKey) {
-                    if (!obterNomeJogadorGlobal()) {
-                        bloquearScript("⚠️ Nome do jogador não encontrado no jogo.");
-                        return false;
-                    }
+            if (username === jogadorAutorizado && chave === licenseKey) {
 
-                    if (expiraEm > agora) {
-                        const tempoRestante = formatarTempo(expiraEm - agora);
-                        console.log(`✅ Licença válida! Expira em: ${tempoRestante}`);
-                        localStorage.setItem("expiraEm", expiraEm.toString());
-                        await atualizarStatusPlanilha("Online", tempoRestante);
-                        return true;
-                    } else {
-                        bloquearScript("⚠️ Sua licença expirou.");
-                        return false;
-                    }
+                // 🚀 Limpeza de histórico quando expira ou nova chave detectada
+                if (expiraEm <= agora) {
+                    localStorage.clear();  // Limpa todo o cache ao expirar
+                    bloquearScript("⚠️ Sua licença expirou. Faça login novamente.");
+                    return false;
                 }
+
+                // ✅ Licença válida - Limpar cache e reiniciar
+                localStorage.setItem("expiraEm", expiraEm.toString());
+                localStorage.setItem("username", username);
+                localStorage.setItem("licenseKey", chave);
+
+                const tempoRestante = formatarTempo(expiraEm - agora);
+                console.log(`✅ Licença válida! Expira em: ${tempoRestante}`);
+                await atualizarStatusPlanilha("Online", tempoRestante);
+                return true;
             }
-            bloquearScript("⚠️ Licença inválida ou não encontrada.");
-        } catch (error) {
-            bloquearScript(`❌ Erro ao validar a licença: ${error.message}`);
         }
+
+        // Se nenhuma licença for encontrada
+        localStorage.clear();
+        bloquearScript("⚠️ Licença inválida ou não encontrada.");
+        return false;
+    } catch (error) {
+        localStorage.clear();  // Limpa em caso de erro também
+        bloquearScript(`❌ Erro ao validar a licença: ${error.message}`);
         return false;
     }
+}
+
 
     /**
      * 📊 Atualizar Status na Planilha Google
@@ -1021,22 +1029,31 @@ function showManualConfig() {
     `;
 
     createPopup(content);
-}
+    setTimeout(restoreState, 100); // Restaurar estado ao abrir o pop-up
 
-// Alternador de abas
+}
+// Alternador de abas ajustado: botão correto em cada aba
 window.toggleSection = function(sectionId) {
     const sections = ['sellConfig', 'buyConfig'];
     const sellButton = document.getElementById('sellButton');
     const buyButton = document.getElementById('buyButton');
 
     sections.forEach(id => {
-        const section = document.getElementById(id);
-        section.style.display = (id === sectionId) ? 'grid' : 'none';
+        document.getElementById(id).style.display = (id === sectionId) ? 'grid' : 'none';
     });
 
-    sellButton.style.display = (sectionId === 'sellConfig') ? 'block' : 'none';
-    buyButton.style.display = (sectionId === 'buyConfig') ? 'block' : 'none';
+    // Controle de exibição dos botões
+    if (sectionId === 'sellConfig') {
+        sellButton.style.display = 'block';
+        buyButton.style.display = 'none';
+    } else if (sectionId === 'buyConfig') {
+        buyButton.style.display = 'block';
+        sellButton.style.display = 'none';
+    }
+
+    setTimeout(restoreState, 50); // Restaurar estado correto
 };
+
 
 // Função para ativar ações
 function activateSell() {
@@ -1072,27 +1089,37 @@ function generateInputField(label, id, icon) {
 // Atualiza o texto e salva o estado de venda
 window.activateSell = function () {
     const sellButton = document.getElementById('sellButton');
-    if (!sellButton) return console.error("❌ Botão de venda não encontrado!");
+    if (!sellButton) {
+        console.error("❌ Botão de venda não encontrado!");
+        return;
+    }
 
     const isActive = sellButton.dataset.active === 'true';
     sellButton.dataset.active = (!isActive).toString();
     localStorage.setItem('sellActive', (!isActive).toString());
+    console.log('Venda:', isActive ? 'Desativada' : 'Ativada');
     updateButtonState(sellButton, !isActive, "Venda");
 };
 
 // Atualiza o texto e salva o estado de compra
 window.activateBuy = function () {
     const buyButton = document.getElementById('buyButton');
-    if (!buyButton) return console.error("❌ Botão de compra não encontrado!");
+    if (!buyButton) {
+        console.error("❌ Botão de compra não encontrado!");
+        return;
+    }
 
     const isActive = buyButton.dataset.active === 'true';
     buyButton.dataset.active = (!isActive).toString();
     localStorage.setItem('buyActive', (!isActive).toString());
+    console.log('Compra:', isActive ? 'Desativada' : 'Ativada');
     updateButtonState(buyButton, !isActive, "Compra");
 };
 
 // Atualiza o estilo e o texto do botão com base no estado
 function updateButtonState(button, isActive, action) {
+    console.log(`Atualizando estado do botão: ${action} - Estado: ${isActive}`);
+
     button.innerText = isActive
         ? `❌ Desativar ${action}`
         : `✅ Ativar ${action}`;
@@ -1102,28 +1129,34 @@ function updateButtonState(button, isActive, action) {
         : (action === "Venda" ? "linear-gradient(135deg, #FFA500, #FF4500)" : "linear-gradient(135deg, #1E90FF, #4169E1)");
 }
 
-// Restaura o estado ao carregar a página
+// Função aprimorada para restaurar o estado com logs
 function restoreState() {
-    const sellButton = document.getElementById('sellButton');
-    const buyButton = document.getElementById('buyButton');
+    console.log("⏳ Restaurando estados dos botões...");
 
-    if (sellButton) {
-        const isSellActive = localStorage.getItem('sellActive') === 'true';
-        sellButton.dataset.active = isSellActive.toString();
-        updateButtonState(sellButton, isSellActive, "Venda");
-    }
+    setTimeout(() => {
+        const sellButton = document.getElementById('sellButton');
+        const buyButton = document.getElementById('buyButton');
 
-    if (buyButton) {
-        const isBuyActive = localStorage.getItem('buyActive') === 'true';
-        buyButton.dataset.active = isBuyActive.toString();
-        updateButtonState(buyButton, isBuyActive, "Compra");
-    }
+        if (sellButton) {
+            const isSellActive = localStorage.getItem('sellActive') === 'true';
+            sellButton.dataset.active = isSellActive.toString();
+            updateButtonState(sellButton, isSellActive, "Venda");
+        }
+
+        if (buyButton) {
+            const isBuyActive = localStorage.getItem('buyActive') === 'true';
+            buyButton.dataset.active = isBuyActive.toString();
+            updateButtonState(buyButton, isBuyActive, "Compra");
+        }
+    }, 50); // Pequeno delay para garantir que o DOM esteja pronto
 }
 
-// Garante que o estado seja restaurado ao carregar a página
-window.addEventListener('load', restoreState);
 
-
+// Aguarda o carregamento completo da página para restaurar o estado
+window.addEventListener('load', () => {
+    console.log("🚀 Página carregada! Restaurando estados...");
+    setTimeout(restoreState, 100); // Garante que os botões já renderizaram
+});
 
 
 
