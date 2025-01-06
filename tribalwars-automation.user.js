@@ -818,8 +818,9 @@ function showFunctionSelector() {
 
 // Função para exibir o pop-up principal com os dois cards
 function showSellPPPopup() {
+    console.log('Abrindo o pop-up principal...');
     const content = `
-    <div style="font-family: Arial, sans-serif; color: #333; max-width: 500px; padding: 20px; border-radius: 12px; background: white; box-shadow: 0 8px 16px rgba(0,0,0,0.2); text-align: center;">
+    <div id="sell-pp-popup" style="font-family: Arial, sans-serif; color: #333; max-width: 500px; padding: 20px; border-radius: 12px; background: white; box-shadow: 0 8px 16px rgba(0,0,0,0.2); text-align: center;">
         <h2 style="color: #3498db; margin-bottom: 20px;">💰 Configurar Venda por PPs</h2>
 
         <!-- Container dos Cards -->
@@ -838,47 +839,309 @@ function showSellPPPopup() {
             </div>
         </div>
 
-        <!-- Botão de Fechar -->
-        <button id="close-sell-pp-popup" style="margin-top: 20px; padding: 10px 20px; background: #e74c3c; border: none; color: white; border-radius: 8px; cursor: pointer;">
-            Fechar
+        <!-- Botão de Voltar -->
+        <button id="back-sell-pp-popup" style="margin-top: 20px; padding: 10px 20px; background: #e74c3c; border: none; color: white; border-radius: 8px; cursor: pointer;">
+            Voltar
         </button>
     </div>
     `;
 
     createPopup(content);
 
-    // Eventos para abrir os respectivos pop-ups
-    document.getElementById('manualConfigCard').addEventListener('click', showManualConfig);
-    document.getElementById('smartConfigCard').addEventListener('click', showSmartConfig);
+    // Garantir a configuração dos eventos ao exibir o pop-up
+    const manualConfigCard = document.getElementById('manualConfigCard');
+    const smartConfigCard = document.getElementById('smartConfigCard');
+    const backButton = document.getElementById('back-sell-pp-popup');
 
-    // Fechar o pop-up
-    document.getElementById('close-sell-pp-popup').addEventListener('click', closePopup);
+    // Adicionando logs para depuração
+    console.log('Elementos encontrados:', { manualConfigCard, smartConfigCard, backButton });
+
+    // Adicionando eventos de clique apenas se os elementos forem encontrados
+    if (manualConfigCard) {
+        manualConfigCard.addEventListener('click', showManualConfig);
+    } else {
+        console.warn('Elemento manualConfigCard não encontrado!');
+    }
+
+    if (smartConfigCard) {
+        smartConfigCard.addEventListener('click', showSmartConfig);
+    } else {
+        console.warn('Elemento smartConfigCard não encontrado!');
+    }
+
+    // Correção no botão de "Voltar" com log
+    if (backButton) {
+        backButton.addEventListener('click', () => {
+            console.log('Botão voltar clicado.');
+            closePopup(); // Fecha o pop-up atual
+            showSellPPPopup(); // Reabre o menu principal
+        });
+    } else {
+        console.error('Elemento backButton não encontrado!');
+    }
 }
+
+
 
 // Evento para exibir o pop-up ao clicar no botão de "Configurar"
 document.body.addEventListener('click', (event) => {
     if (event.target.getAttribute('data-config-type') === "Vender por pps") {
+        console.log('Botão "Configurar" clicado');
+        closePopup(); // Garante que não haja pop-ups duplicados
         showSellPPPopup();
     }
 });
 
-// Função para exibir o pop-up de configuração manual
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function showManualConfig() {
     const content = `
-    <div style="font-family: Arial, sans-serif; color: #333; max-width: 400px; padding: 20px; border-radius: 12px; background: white; box-shadow: 0 8px 16px rgba(0,0,0,0.2); text-align: center;">
-        <h2 style="color: #f39c12;">🛠️ Configuração Manual</h2>
-        <label>💰 Preço Mínimo (PP):
-            <input type="number" id="manualMinPrice" value="50" style="width: 100%; padding: 8px;">
-        </label>
-        <label>📦 Quantidade de Recursos:
-            <input type="number" id="manualResourceAmount" value="1000" style="width: 100%; padding: 8px;">
-        </label>
-        <button onclick="saveManualConfig()" style="margin-top: 20px; padding: 10px 20px; background: #27ae60; color: white; border: none; border-radius: 8px; cursor: pointer;">Salvar</button>
-        <button onclick="showSellPPPopup()" style="margin-top: 10px; padding: 10px 20px; background: #e74c3c; color: white; border: none; border-radius: 8px; cursor: pointer;">Voltar</button>
+    <div style="
+        font-family: 'Poppins', Arial, sans-serif;
+        max-width: 770px;
+        width: 100%;
+        padding: 25px;
+        border-radius: 16px;
+        background: #f9f9f9;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.2);
+        border: 1px solid #ddd;
+        text-align: center;
+        overflow-y: auto;
+        box-sizing: border-box;
+        animation: fadeIn 0.4s ease-in-out;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+    ">
+        <h2 style="color: #2c3e50; font-size: 24px; margin-bottom: 25px; font-weight: 700;">
+            ⚙️ Configuração Avançada de Mercado
+        </h2>
+
+        <!-- Abas de Seleção -->
+        <div style="display: flex; justify-content: center; gap: 20px; margin-bottom: 30px;">
+            <button onclick="toggleSection('sellConfig')"
+                style="flex: 1; padding: 12px; border: none; border-radius: 12px;
+                background: linear-gradient(135deg, #FFA500, #FF4500);
+                color: white; cursor: pointer; font-weight: bold;
+                box-shadow: 0 6px 15px rgba(0,0,0,0.2); font-size: 18px;">
+                💰 Venda
+            </button>
+            <button onclick="toggleSection('buyConfig')"
+                style="flex: 1; padding: 12px; border: none; border-radius: 12px;
+                background: linear-gradient(135deg, #1E90FF, #4169E1);
+                color: white; cursor: pointer; font-weight: bold;
+                box-shadow: 0 6px 15px rgba(0,0,0,0.2); font-size: 18px;">
+                🛒 Compra
+            </button>
+        </div>
+
+        <!-- Seção de Venda -->
+        <div id="sellConfig" style="display: none;">
+            <h3 style="color: #444; font-size: 20px; margin-bottom: 20px;">📊 Configurações de Venda</h3>
+            <div style="
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 20px;
+                justify-items: center;
+                margin-top: 15px;">
+                ${generateInputField('Madeira', 'woodRate', '🌲')}
+                ${generateInputField('Argila', 'clayRate', '🧱')}
+                ${generateInputField('Ferro', 'ironRate', '⛏️')}
+                ${generateInputField('Reservar Madeira', 'reserveWood', '🌲')}
+                ${generateInputField('Reservar Argila', 'reserveClay', '🧱')}
+                ${generateInputField('Reservar Ferro', 'reserveIron', '⛏️')}
+                ${generateInputField('Venda por vez', 'sellAmount', '📦')}
+            </div>
+        </div>
+
+        <!-- Seção de Compra -->
+        <div id="buyConfig" style="display: block;">
+            <h3 style="color: #444; font-size: 20px; margin-bottom: 20px;">🛒 Configurações de Compra</h3>
+            <div style="
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 20px;
+                justify-items: center;
+                margin-top: 15px;">
+                ${generateInputField('Madeira', 'buyWoodRate', '🌲')}
+                ${generateInputField('Argila', 'buyClayRate', '🧱')}
+                ${generateInputField('Ferro', 'buyIronRate', '⛏️')}
+                ${generateInputField('Compra por vez', 'buyAmount', '📦')}
+                ${generateInputField('Limite Armazém', 'storageLimit', '🏢')}
+                ${generateInputField('Estoque Mínimo', 'minStock', '📉')}
+            </div>
+        </div>
+
+        <!-- Botões de Ação -->
+        <div style="margin-top: 30px; display: flex; justify-content: space-between; gap: 20px;">
+            <!-- Botão Ativar Venda -->
+            <button id="sellButton"
+                onclick="activateSell()"
+                style="display: none; flex: 1; padding: 16px; border-radius: 14px; border: none;
+                background: linear-gradient(135deg, #FFA500, #FF4500);
+                color: white; font-weight: bold; cursor: pointer;
+                box-shadow: 0 6px 15px rgba(0,0,0,0.2); font-size: 20px;">
+                ✅ Ativar Venda
+            </button>
+
+            <!-- Botão Ativar Compra -->
+            <button id="buyButton"
+                onclick="activateBuy()"
+                style="display: block; flex: 1; padding: 16px; border-radius: 14px; border: none;
+                background: linear-gradient(135deg, #1E90FF, #4169E1);
+                color: white; font-weight: bold; cursor: pointer;
+                box-shadow: 0 6px 15px rgba(0,0,0,0.2); font-size: 20px;">
+                🛒 Ativar Compra
+            </button>
+
+            <!-- Botão Fechar -->
+            <button onclick="closePopup()"
+                style="flex: 1; padding: 16px; border-radius: 14px; border: none;
+                background: linear-gradient(135deg, #DC143C, #B22222);
+                color: white; font-weight: bold; cursor: pointer;
+                box-shadow: 0 6px 15px rgba(0,0,0,0.2); font-size: 20px;">
+                ❌ Fechar
+            </button>
+        </div>
     </div>
     `;
+
     createPopup(content);
 }
+
+// Alternador de abas
+window.toggleSection = function(sectionId) {
+    const sections = ['sellConfig', 'buyConfig'];
+    const sellButton = document.getElementById('sellButton');
+    const buyButton = document.getElementById('buyButton');
+
+    sections.forEach(id => {
+        const section = document.getElementById(id);
+        section.style.display = (id === sectionId) ? 'grid' : 'none';
+    });
+
+    sellButton.style.display = (sectionId === 'sellConfig') ? 'block' : 'none';
+    buyButton.style.display = (sectionId === 'buyConfig') ? 'block' : 'none';
+};
+
+// Função para ativar ações
+function activateSell() {
+    alert("✅ Venda ativada com sucesso!");
+}
+
+function activateBuy() {
+    alert("🛒 Compra ativada com sucesso!");
+}
+
+// Gerador de campos de entrada
+function generateInputField(label, id, icon) {
+    return `
+    <div style="background: #fff; padding: 12px; border-radius: 10px;
+        width: 85%; box-shadow: 0 4px 12px rgba(0,0,0,0.12); cursor: pointer;">
+        <label for="${id}" style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">
+            ${icon} ${label}
+        </label>
+        <input type="number" id="${id}"
+            style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 8px;
+            font-size: 14px; box-sizing: border-box;"/>
+    </div>
+    `;
+}
+
+
+
+
+
+
+
+
+// Atualiza o texto e salva o estado de venda
+window.activateSell = function () {
+    const sellButton = document.getElementById('sellButton');
+    if (!sellButton) return console.error("❌ Botão de venda não encontrado!");
+
+    const isActive = sellButton.dataset.active === 'true';
+    sellButton.dataset.active = (!isActive).toString();
+    localStorage.setItem('sellActive', (!isActive).toString());
+    updateButtonState(sellButton, !isActive, "Venda");
+};
+
+// Atualiza o texto e salva o estado de compra
+window.activateBuy = function () {
+    const buyButton = document.getElementById('buyButton');
+    if (!buyButton) return console.error("❌ Botão de compra não encontrado!");
+
+    const isActive = buyButton.dataset.active === 'true';
+    buyButton.dataset.active = (!isActive).toString();
+    localStorage.setItem('buyActive', (!isActive).toString());
+    updateButtonState(buyButton, !isActive, "Compra");
+};
+
+// Atualiza o estilo e o texto do botão com base no estado
+function updateButtonState(button, isActive, action) {
+    button.innerText = isActive
+        ? `❌ Desativar ${action}`
+        : `✅ Ativar ${action}`;
+
+    button.style.background = isActive
+        ? "linear-gradient(135deg, #DC143C, #B22222)"
+        : (action === "Venda" ? "linear-gradient(135deg, #FFA500, #FF4500)" : "linear-gradient(135deg, #1E90FF, #4169E1)");
+}
+
+// Restaura o estado ao carregar a página
+function restoreState() {
+    const sellButton = document.getElementById('sellButton');
+    const buyButton = document.getElementById('buyButton');
+
+    if (sellButton) {
+        const isSellActive = localStorage.getItem('sellActive') === 'true';
+        sellButton.dataset.active = isSellActive.toString();
+        updateButtonState(sellButton, isSellActive, "Venda");
+    }
+
+    if (buyButton) {
+        const isBuyActive = localStorage.getItem('buyActive') === 'true';
+        buyButton.dataset.active = isBuyActive.toString();
+        updateButtonState(buyButton, isBuyActive, "Compra");
+    }
+}
+
+// Garante que o estado seja restaurado ao carregar a página
+window.addEventListener('load', restoreState);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Função para exibir o pop-up de configuração inteligente
 function showSmartConfig() {
@@ -2384,8 +2647,10 @@ function getBuildingIdFromName(name) {
 }
 
 
-
-
+// Exemplo de função de persistência (ajuste conforme necessário)
+function saveRecruitmentConfig() {
+    localStorage.setItem('recruitmentConfig', JSON.stringify(recruitmentConfig));
+}
 
 
 
@@ -3766,6 +4031,19 @@ function saveRecruitmentSettings(event) {
 }
 
 
+// Salva o objeto recruitmentConfig no localStorage
+function saveRecruitmentConfig() {
+    localStorage.setItem('recruitmentConfig', JSON.stringify(recruitmentConfig));
+}
+
+
+
+
+// Fecha o pop-up
+function closePopup() {
+    const popup = document.getElementById('custom-popup');
+    if (popup) popup.remove();
+}
 
 
 
