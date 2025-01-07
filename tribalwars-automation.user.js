@@ -915,9 +915,10 @@ document.body.addEventListener('click', (event) => {
 
 
 
+
 function showManualConfig() {
     const content = `
-    <div style="
+    <div class="popup-overlay" style="
         font-family: 'Poppins', Arial, sans-serif;
         max-width: 770px;
         width: 100%;
@@ -934,6 +935,7 @@ function showManualConfig() {
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
+        z-index: 10000;
     ">
         <h2 style="color: #2c3e50; font-size: 24px; margin-bottom: 25px; font-weight: 700;">
             ⚙️ Configuração Avançada de Mercado
@@ -941,17 +943,13 @@ function showManualConfig() {
 
         <!-- Abas de Seleção -->
         <div style="display: flex; justify-content: center; gap: 20px; margin-bottom: 30px;">
-            <button onclick="toggleSection('sellConfig')"
-                style="flex: 1; padding: 12px; border: none; border-radius: 12px;
-                background: linear-gradient(135deg, #FFA500, #FF4500);
-                color: white; cursor: pointer; font-weight: bold;
+            <button onclick="toggleSection('sellConfig')" style="flex: 1; padding: 12px; border: none; border-radius: 12px;
+                background: linear-gradient(135deg, #FFA500, #FF4500); color: white; cursor: pointer; font-weight: bold;
                 box-shadow: 0 6px 15px rgba(0,0,0,0.2); font-size: 18px;">
                 💰 Venda
             </button>
-            <button onclick="toggleSection('buyConfig')"
-                style="flex: 1; padding: 12px; border: none; border-radius: 12px;
-                background: linear-gradient(135deg, #1E90FF, #4169E1);
-                color: white; cursor: pointer; font-weight: bold;
+            <button onclick="toggleSection('buyConfig')" style="flex: 1; padding: 12px; border: none; border-radius: 12px;
+                background: linear-gradient(135deg, #1E90FF, #4169E1); color: white; cursor: pointer; font-weight: bold;
                 box-shadow: 0 6px 15px rgba(0,0,0,0.2); font-size: 18px;">
                 🛒 Compra
             </button>
@@ -960,12 +958,7 @@ function showManualConfig() {
         <!-- Seção de Venda -->
         <div id="sellConfig" style="display: none;">
             <h3 style="color: #444; font-size: 20px; margin-bottom: 20px;">📊 Configurações de Venda</h3>
-            <div style="
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 20px;
-                justify-items: center;
-                margin-top: 15px;">
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; justify-items: center; margin-top: 15px;">
                 ${generateInputField('Madeira', 'woodRate', '🌲')}
                 ${generateInputField('Argila', 'clayRate', '🧱')}
                 ${generateInputField('Ferro', 'ironRate', '⛏️')}
@@ -979,12 +972,7 @@ function showManualConfig() {
         <!-- Seção de Compra -->
         <div id="buyConfig" style="display: block;">
             <h3 style="color: #444; font-size: 20px; margin-bottom: 20px;">🛒 Configurações de Compra</h3>
-            <div style="
-                display: grid;
-                grid-template-columns: repeat(3, 1fr);
-                gap: 20px;
-                justify-items: center;
-                margin-top: 15px;">
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; justify-items: center; margin-top: 15px;">
                 ${generateInputField('Madeira', 'buyWoodRate', '🌲')}
                 ${generateInputField('Argila', 'buyClayRate', '🧱')}
                 ${generateInputField('Ferro', 'buyIronRate', '⛏️')}
@@ -996,42 +984,36 @@ function showManualConfig() {
 
         <!-- Botões de Ação -->
         <div style="margin-top: 30px; display: flex; justify-content: space-between; gap: 20px;">
-            <!-- Botão Ativar Venda -->
-            <button id="sellButton"
-                onclick="activateSell()"
-                style="display: none; flex: 1; padding: 16px; border-radius: 14px; border: none;
-                background: linear-gradient(135deg, #FFA500, #FF4500);
-                color: white; font-weight: bold; cursor: pointer;
+            <button id="sellButton" onclick="activateSell()" style="display: none; flex: 1; padding: 16px; border-radius: 14px; border: none;
+                background: linear-gradient(135deg, #FFA500, #FF4500); color: white; font-weight: bold; cursor: pointer;
                 box-shadow: 0 6px 15px rgba(0,0,0,0.2); font-size: 20px;">
                 ✅ Ativar Venda
             </button>
 
-            <!-- Botão Ativar Compra -->
-            <button id="buyButton"
-                onclick="activateBuy()"
-                style="display: block; flex: 1; padding: 16px; border-radius: 14px; border: none;
-                background: linear-gradient(135deg, #1E90FF, #4169E1);
-                color: white; font-weight: bold; cursor: pointer;
+            <button id="buyButton" onclick="activateBuy()" style="display: block; flex: 1; padding: 16px; border-radius: 14px; border: none;
+                background: linear-gradient(135deg, #1E90FF, #4169E1); color: white; font-weight: bold; cursor: pointer;
                 box-shadow: 0 6px 15px rgba(0,0,0,0.2); font-size: 20px;">
                 🛒 Ativar Compra
             </button>
 
-            <!-- Botão Fechar -->
-            <button onclick="closePopup()"
-                style="flex: 1; padding: 16px; border-radius: 14px; border: none;
-                background: linear-gradient(135deg, #DC143C, #B22222);
-                color: white; font-weight: bold; cursor: pointer;
-                box-shadow: 0 6px 15px rgba(0,0,0,0.2); font-size: 20px;">
-                ❌ Fechar
-            </button>
+            <!-- ✅ Atualização: Fechar todos os pop-ups -->
+            <button onclick="closeAllPopups()"
+    style="flex: 1; padding: 16px; border-radius: 14px; border: none;
+    background: linear-gradient(135deg, #DC143C, #B22222); color: white; font-weight: bold; cursor: pointer;
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.2); font-size: 20px;">
+    ❌ Fechar
+</button>
+
         </div>
     </div>
     `;
 
     createPopup(content);
-    setTimeout(restoreState, 100); // Restaurar estado ao abrir o pop-up
-
+    setTimeout(restoreState, 100);
 }
+
+
+
 // Alternador de abas ajustado: botão correto em cada aba
 window.toggleSection = function(sectionId) {
     const sections = ['sellConfig', 'buyConfig'];
@@ -1083,6 +1065,22 @@ function generateInputField(label, id, icon) {
 
 
 
+// Função global para fechar QUALQUER pop-up corretamente, sem bugs
+window.closeAllPopups = function () {
+    const popups = document.querySelectorAll('.popup-overlay, .popup_box, #custom-popup');
+    if (popups.length > 0) {
+        popups.forEach(popup => {
+            popup.style.opacity = '0';
+            setTimeout(() => popup.remove(), 300); // Animação de fade-out antes de remover
+        });
+        console.log(`✅ ${popups.length} pop-up(s) fechado(s) com sucesso!`);
+    } else {
+        console.warn('⚠️ Nenhum pop-up encontrado para fechar.');
+    }
+};
+
+
+
 
 
 
@@ -1129,9 +1127,19 @@ function updateButtonState(button, isActive, action) {
         : (action === "Venda" ? "linear-gradient(135deg, #FFA500, #FF4500)" : "linear-gradient(135deg, #1E90FF, #4169E1)");
 }
 
-// Função aprimorada para restaurar o estado com logs
+/// Adicionando salvamento automático para os campos de input
+window.addEventListener('input', function (event) {
+    if (event.target.tagName === 'INPUT') {
+        const inputId = event.target.id;
+        const inputValue = event.target.value;
+        localStorage.setItem(inputId, inputValue);
+        console.log(`💾 Valor salvo: ${inputId} = ${inputValue}`);
+    }
+});
+
+// Função aprimorada para restaurar o estado dos inputs
 function restoreState() {
-    console.log("⏳ Restaurando estados dos botões...");
+    console.log("⏳ Restaurando estados dos botões e inputs...");
 
     setTimeout(() => {
         const sellButton = document.getElementById('sellButton');
@@ -1148,19 +1156,266 @@ function restoreState() {
             buyButton.dataset.active = isBuyActive.toString();
             updateButtonState(buyButton, isBuyActive, "Compra");
         }
+
+        // Restaurando valores dos inputs salvos
+        document.querySelectorAll('input[type="number"]').forEach(input => {
+            const savedValue = localStorage.getItem(input.id);
+            if (savedValue !== null) {
+                input.value = savedValue;
+                console.log(`📦 Valor restaurado: ${input.id} = ${savedValue}`);
+            }
+        });
     }, 50); // Pequeno delay para garantir que o DOM esteja pronto
 }
 
-
-// Aguarda o carregamento completo da página para restaurar o estado
+// Garantir a restauração completa ao carregar a página
 window.addEventListener('load', () => {
     console.log("🚀 Página carregada! Restaurando estados...");
-    setTimeout(restoreState, 100); // Garante que os botões já renderizaram
+    setTimeout(restoreState, 100);
 });
 
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+// ✅ Garantir que o script rode apenas na tela de mercado e na aba de troca premium
+(function () {
+    const urlAtual = window.location.href;
+    const regexMercadoPremium = /screen=market&mode=exchange/;
+
+    if (!regexMercadoPremium.test(urlAtual)) {
+        console.warn("⚠️ Script bloqueado! Você não está na tela de troca premium.");
+        return; // ✅ Bloqueia a execução caso a URL não corresponda
+    }
+
+    console.log("✅ Script de venda premium ativado corretamente!");
+
+// ✅ Função genérica para capturar valores do DOM ou LocalStorage
+function capturarValorDoElemento(seletor, storageKey) {
+    const elemento = document.querySelector(seletor);
+    if (elemento) {
+        const valor = elemento.tagName === 'INPUT'
+            ? parseInt(elemento.value.trim().replace(/\D/g, ''), 10) || 0
+            : parseInt(elemento.textContent.trim().replace(/\D/g, ''), 10) || 0;
+        localStorage.setItem(storageKey, valor);
+        return valor;
+    }
+    return parseInt(localStorage.getItem(storageKey), 10) || 0;
+}
+
+// ✅ Função para capturar a capacidade máxima de transporte
+function obterCapacidadeTransporte() {
+    const capacidade = capturarValorDoElemento('#market_merchant_max_transport', 'capacidadeTransporte');
+    console.log(`🚚 Capacidade Máxima de Transporte: ${capacidade}`);
+    return capacidade;
+}
+
+// ✅ Função para capturar o valor de venda por vez
+function obterValorVendaPorVez() {
+    const vendaPorVez = capturarValorDoElemento('#sellAmountInput', 'sellAmount');
+    console.log(`📦 Venda Máxima por Vez: ${vendaPorVez}`);
+    return vendaPorVez;
+}
+
+// ✅ Função para capturar o estoque e a capacidade premium
+function obterEstoqueECapacidadePremium() {
+    const estoque = {
+        madeira: capturarValorDoElemento('#premium_exchange_stock_wood', 'stockWood'),
+        argila: capturarValorDoElemento('#premium_exchange_stock_stone', 'stockClay'),
+        ferro: capturarValorDoElemento('#premium_exchange_stock_iron', 'stockIron')
+    };
+    const capacidade = {
+        madeira: capturarValorDoElemento('#premium_exchange_capacity_wood', 'capacityWood'),
+        argila: capturarValorDoElemento('#premium_exchange_capacity_stone', 'capacityClay'),
+        ferro: capturarValorDoElemento('#premium_exchange_capacity_iron', 'capacityIron')
+    };
+
+    console.log("📦 Estoque Premium Atual:", estoque);
+    console.log("🗄️ Capacidade Premium Atual:", capacidade);
+    return { estoque, capacidade };
+}
+
+// ✅ Função para capturar taxas premium e taxas de venda
+function obterTaxas() {
+    const taxasPremium = {
+        madeira: capturarValorDoElemento('#premium_exchange_rate_wood > div:nth-child(1)', 'premiumWood'),
+        argila: capturarValorDoElemento('#premium_exchange_rate_stone > div:nth-child(1)', 'premiumClay'),
+        ferro: capturarValorDoElemento('#premium_exchange_rate_iron > div:nth-child(1)', 'premiumIron')
+    };
+
+    const taxasVenda = {
+        madeira: capturarValorDoElemento('#sell_rate_wood', 'woodRate'),
+        argila: capturarValorDoElemento('#sell_rate_stone', 'clayRate'),
+        ferro: capturarValorDoElemento('#sell_rate_iron', 'ironRate')
+    };
+
+    console.log("💡 Taxas Premium Capturadas:", taxasPremium);
+    console.log("💱 Taxas de Venda Capturadas:", taxasVenda);
+
+    return { taxasPremium, taxasVenda };
+}
+
+// ✅ Função para capturar recursos disponíveis após considerar as reservas
+function calcularRecursosDisponiveis() {
+    const inventario = {
+        madeira: capturarValorDoElemento('#wood', 'woodStock'),
+        argila: capturarValorDoElemento('#stone', 'clayStock'),
+        ferro: capturarValorDoElemento('#iron', 'ironStock')
+    };
+    const reservas = {
+        madeira: parseInt(localStorage.getItem('reserveWood'), 10) || 0,
+        argila: parseInt(localStorage.getItem('reserveClay'), 10) || 0,
+        ferro: parseInt(localStorage.getItem('reserveIron'), 10) || 0
+    };
+
+    const recursosDisponiveis = {
+        madeira: Math.max(inventario.madeira - reservas.madeira, 0),
+        argila: Math.max(inventario.argila - reservas.argila, 0),
+        ferro: Math.max(inventario.ferro - reservas.ferro, 0)
+    };
+
+    console.log("📊 Recursos Disponíveis após Reservas:", recursosDisponiveis);
+    return recursosDisponiveis;
+}
+
+// ✅ Função para calcular o recurso mais vantajoso para venda considerando taxa premium
+// ✅ Função para calcular o recurso mais vantajoso para venda considerando taxa premium
+function calcularRecursosParaVendaMelhor() {
+    const recursosDisponiveis = calcularRecursosDisponiveis();
+    const capacidadeTransporte = obterCapacidadeTransporte();
+    const valorVendaPorVez = obterValorVendaPorVez();
+    const { estoque, capacidade } = obterEstoqueECapacidadePremium();
+    const { taxasPremium, taxasVenda } = obterTaxas();
+
+    const diferencaCapacidadeEstoque = {
+        madeira: capacidade.madeira - estoque.madeira,
+        argila: capacidade.argila - estoque.argila,
+        ferro: capacidade.ferro - estoque.ferro
+    };
+
+    console.log("📊 Diferença Capacidade - Estoque (Capacidade Restante):", diferencaCapacidadeEstoque);
+
+    let melhorRecurso = null;
+    let menorTaxa = Infinity;
+    let quantidadeFinal = 0;
+
+    Object.keys(taxasPremium).forEach(recurso => {
+        const taxaPremium = taxasPremium[recurso];
+
+        // ✅ Agora verificando se o jogador tem pelo menos 1x taxa para iniciar a venda
+        if (recursosDisponiveis[recurso] < taxaPremium) {
+            console.warn(`❌ Recursos insuficientes para cobrir a taxa premium de ${recurso}`);
+            return;
+        }
+
+        // ✅ Calcular o maior múltiplo possível de taxa premium sem ultrapassar limites
+        const quantidadeMaximaPossivel = Math.floor(
+            Math.min(
+                recursosDisponiveis[recurso],
+                capacidadeTransporte,
+                diferencaCapacidadeEstoque[recurso],
+                valorVendaPorVez
+            ) / taxaPremium
+        ) * taxaPremium;
+
+        // ✅ Garantindo que o mínimo seja ao menos 1x o valor da taxa
+        if (quantidadeMaximaPossivel >= taxaPremium && taxaPremium < menorTaxa) {
+            melhorRecurso = recurso;
+            menorTaxa = taxaPremium;
+            quantidadeFinal = quantidadeMaximaPossivel;
+        }
+    });
+
+    if (!melhorRecurso || quantidadeFinal < menorTaxa) {
+        console.warn("⚠️ Nenhum recurso atende às condições mínimas para venda.");
+        return {};
+    }
+
+    console.log(`🏷️ Melhor Recurso Selecionado: ${melhorRecurso}`);
+    console.log(`📦 Quantidade Calculada Respeitando a Taxa Premium: ${quantidadeFinal}`);
+    return { [melhorRecurso]: quantidadeFinal };
+}
+
+// ✅ Função para validar e executar a venda automatizada apenas se a venda estiver ativada
+function validarVendaAutomatizadaMelhorTaxa() {
+    console.log("🔍 Testando Venda com Menor Taxa Premium (Atualizado)...");
+
+    // ✅ Verificação centralizada: venda deve estar ativada no localStorage
+    if (localStorage.getItem('sellActive') !== 'true') {
+        console.warn("⚠️ Venda automatizada não está ativada. Encerrando execução.");
+        return;
+    }
+
+    console.log("✅ Venda Ativada! Preenchendo o input do recurso com menor taxa premium...");
+    preencherInputMelhorVenda();
+}
+
+// ✅ Função para preencher os inputs corretamente com validação e taxa premium
+// ✅ Função para preencher os inputs corretamente e clicar automaticamente nos botões
+function preencherInputMelhorVenda() {
+    const recursosParaVenda = calcularRecursosParaVendaMelhor();
+    const inputs = {
+        madeira: document.querySelector('input[name="sell_wood"]'),
+        argila: document.querySelector('input[name="sell_stone"]'),
+        ferro: document.querySelector('input[name="sell_iron"]')
+    };
+
+    let vendaValida = false;
+
+    // ✅ Limpar inputs antes de preencher
+    Object.values(inputs).forEach(input => (input.value = ''));
+
+    // ✅ Preencher inputs se a quantidade for válida
+    Object.entries(recursosParaVenda).forEach(([recurso, quantidade]) => {
+        if (inputs[recurso] && quantidade > 0) {
+            inputs[recurso].value = quantidade;
+            vendaValida = true;
+            console.log(`🎯 Input preenchido para ${recurso}: ${quantidade}`);
+        } else {
+            console.warn(`⚠️ Nenhum input preenchido para ${recurso}`);
+        }
+    });
+
+    // ✅ Se os critérios forem atendidos, clicar no botão "Calcular melhor oferta"
+    if (vendaValida) {
+        const botaoCalcularMelhorOferta = document.querySelector('input.btn-premium-exchange-buy');
+        if (botaoCalcularMelhorOferta) {
+            botaoCalcularMelhorOferta.click();
+            console.log('✅ Botão "Calcular melhor oferta" clicado automaticamente!');
+
+            // ✅ Aguardar a interface processar antes de clicar em "Confirmar"
+            setTimeout(() => {
+                const botaoConfirmar = document.querySelector('button.btn-confirm-yes');
+                if (botaoConfirmar) {
+                    botaoConfirmar.click();
+                    console.log('✅ Botão "Confirmar" clicado automaticamente!');
+                } else {
+                    console.error('❌ Botão "Confirmar" não encontrado!');
+                }
+            }, 1500); // ✅ Delay de segurança para garantir que a interface carregue
+        } else {
+            console.error('❌ Botão "Calcular melhor oferta" não encontrado!');
+        }
+    } else {
+        console.warn("⚠️ Critérios não atendidos, botões não clicados.");
+    }
+}
+
+// ✅ Teste Completo: Executar apenas se a venda estiver ativada e clicar automaticamente nos botões
+console.log("🔍 Testando Venda Completa com Clique Automático...");
+validarVendaAutomatizadaMelhorTaxa();
+
+})();
 
 
 
@@ -2680,10 +2935,10 @@ function getBuildingIdFromName(name) {
 }
 
 
-// Exemplo de função de persistência (ajuste conforme necessário)
+/*// Exemplo de função de persistência (ajuste conforme necessário)
 function saveRecruitmentConfig() {
     localStorage.setItem('recruitmentConfig', JSON.stringify(recruitmentConfig));
-}
+}*/
 
 
 
@@ -4064,19 +4319,19 @@ function saveRecruitmentSettings(event) {
 }
 
 
-// Salva o objeto recruitmentConfig no localStorage
+/*// Salva o objeto recruitmentConfig no localStorage
 function saveRecruitmentConfig() {
     localStorage.setItem('recruitmentConfig', JSON.stringify(recruitmentConfig));
-}
+}*/
 
 
 
-
+/*
 // Fecha o pop-up
 function closePopup() {
     const popup = document.getElementById('custom-popup');
     if (popup) popup.remove();
-}
+}*/
 
 
 
