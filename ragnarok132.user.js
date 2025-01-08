@@ -5,14 +5,12 @@
 // @description  Script completo para Tribal Wars: Verificação de licença, gerenciamento de recrutamento e fila de construção fluida com atualizações automáticas.
 // @author       Você
 // @icon         https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRqZkx9l1oFSMXaHyoydMSRhtkyQjfvjovCIw&s
-// @match        https://*.tribalwars.com.br/*
-// @match        https://www.tribalwars.com.br/
+// @match        https://br132.tribalwars.com.br/*
 // @grant        none
 // @require      https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js
 // @updateURL    https://raw.githubusercontent.com/C7696/RagnarokScript/main/Ragnarok.132
 // @downloadURL  https://raw.githubusercontent.com/C7696/RagnarokScript/main/Ragnarok.132
 // ==/UserScript==
-
 
 
 
@@ -642,15 +640,15 @@ function performAutoLogin() {
 
 
     for (const button of worldButtons) {
-        if (button.textContent.trim() === 'Mundo 132') {
+        if (button.textContent.trim() === 'Mundo 131') {
             button.click();
-            console.log('Clicou no botão "Mundo 132"');
+            console.log('Clicou no botão "Mundo 131"');
             return;
         }
     }
 
 
-    console.log('Botão "Mundo 132" não encontrado');
+    console.log('Botão "Mundo 131" não encontrado');
 }
 
 
@@ -679,12 +677,27 @@ window.addEventListener('load', performAutoLogin);
 
 
     // Redireciona para uma URL específica
-    function redirectTo(screen) {
-        const villageId = new URLSearchParams(window.location.search).get('village');
-        const url = `https://br132.tribalwars.com.br/game.php?village=${villageId}&${screen}`;
-        const randomTime = Math.floor(Math.random() * 11 + 10) * 1000; // 10 a 20 segundos
-        setTimeout(() => window.location.href = url, randomTime);
-    }
+    // Redireciona para uma URL específica e simula o pressionamento da tecla "D"
+function redirectTo(screen) {
+    const villageId = new URLSearchParams(window.location.search).get('village');
+    const url = `https://br131.tribalwars.com.br/game.php?village=${villageId}&${screen}`;
+    const randomTime = Math.floor(Math.random() * 11 + 10) * 1000; // 10 a 20 segundos
+    setTimeout(() => {
+        window.location.href = url;
+        // Aguarda o redirecionamento ser concluído antes de simular a tecla
+        setTimeout(() => {
+            const event = new KeyboardEvent('keydown', {
+                key: 'd',
+                code: 'KeyD',
+                keyCode: 68,
+                bubbles: true
+            });
+            document.dispatchEvent(event);
+            console.log('Tecla "D" pressionada automaticamente após o redirecionamento.');
+        }, 2000); // Pequeno atraso para garantir que a página esteja carregada
+    }, randomTime);
+}
+
 
 
     // Inicia o redirecionamento automático
@@ -1193,7 +1206,7 @@ window.addEventListener('load', () => {
 // ✅ Garantir que o script rode apenas na tela de mercado e na aba de troca premium
 (function () {
     const urlAtual = window.location.href;
-    const regexMercadoPremium = /screen=market\&mode=exchange/;
+    const regexMercadoPremium = /screen=market&mode=exchange/;
 
     if (!regexMercadoPremium.test(urlAtual)) {
         console.warn("⚠️ Script bloqueado! Você não está na tela de troca premium.");
@@ -1290,7 +1303,8 @@ function calcularRecursosDisponiveis() {
     return recursosDisponiveis;
 }
 
-// ✅ Função para calcular o recurso mais vantajoso para venda respeitando a taxa mínima do jogador
+// ✅ Função para calcular o recurso mais vantajoso para venda considerando taxa premium
+// ✅ Função para calcular o recurso mais vantajoso para venda considerando taxa premium
 function calcularRecursosParaVendaMelhor() {
     const recursosDisponiveis = calcularRecursosDisponiveis();
     const capacidadeTransporte = obterCapacidadeTransporte();
@@ -1310,63 +1324,48 @@ function calcularRecursosParaVendaMelhor() {
     let menorTaxa = Infinity;
     let quantidadeFinal = 0;
 
-    // ✅ Loop para avaliar cada recurso e decidir a venda corretamente
     Object.keys(taxasPremium).forEach(recurso => {
         const taxaPremium = taxasPremium[recurso];
-        const taxaVendaJogador = taxasVenda[recurso];
-        const recursoDisponivel = recursosDisponiveis[recurso];
 
-        // ✅ Bloquear venda se não houver recursos suficientes para cobrir a taxa premium
-        if (recursoDisponivel < taxaPremium) {
-            console.warn(`❌ ${recurso.toUpperCase()}: Recursos insuficientes (${recursoDisponivel}) para cobrir a taxa premium (${taxaPremium}).`);
+        // ✅ Agora verificando se o jogador tem pelo menos 1x taxa para iniciar a venda
+        if (recursosDisponiveis[recurso] < taxaPremium) {
+            console.warn(`❌ Recursos insuficientes para cobrir a taxa premium de ${recurso}`);
             return;
         }
 
-        // ✅ CORREÇÃO: Permitir venda se a taxa premium for igual ou MENOR que a taxa mínima definida
-        if (taxaPremium > taxaVendaJogador) {
-            console.warn(`❌ ${recurso.toUpperCase()}: Taxa premium (${taxaPremium}) superior à taxa mínima definida (${taxaVendaJogador}). Ignorando.`);
-            return;
-        }
-
-        // ✅ Calcular a quantidade máxima possível respeitando os limites de transporte e estoque
+        // ✅ Calcular o maior múltiplo possível de taxa premium sem ultrapassar limites
         const quantidadeMaximaPossivel = Math.floor(
             Math.min(
-                recursoDisponivel,
+                recursosDisponiveis[recurso],
                 capacidadeTransporte,
                 diferencaCapacidadeEstoque[recurso],
                 valorVendaPorVez
             ) / taxaPremium
         ) * taxaPremium;
 
-        // ✅ Garantir que a quantidade seja suficiente para realizar a venda
-        if (quantidadeMaximaPossivel < taxaPremium) {
-            console.warn(`⚠️ ${recurso.toUpperCase()}: Quantidade calculada insuficiente (${quantidadeMaximaPossivel}).`);
-            return;
-        }
-
-        // ✅ Selecionar o recurso com a menor taxa premium válida
-        if (taxaPremium <= taxaVendaJogador && taxaPremium < menorTaxa) {
+        // ✅ Garantindo que o mínimo seja ao menos 1x o valor da taxa
+        if (quantidadeMaximaPossivel >= taxaPremium && taxaPremium < menorTaxa) {
             melhorRecurso = recurso;
             menorTaxa = taxaPremium;
             quantidadeFinal = quantidadeMaximaPossivel;
         }
     });
 
-    // ✅ Bloquear se nenhum recurso atender às condições
-    if (!melhorRecurso || quantidadeFinal <= 0) {
-        console.warn("⚠️ Nenhum recurso atendeu aos critérios mínimos de venda. Finalizando execução.");
+    if (!melhorRecurso || quantidadeFinal < menorTaxa) {
+        console.warn("⚠️ Nenhum recurso atende às condições mínimas para venda.");
         return {};
     }
 
-    console.log(`✅ Melhor Recurso Selecionado: ${melhorRecurso}`);
-    console.log(`📦 Quantidade Calculada: ${quantidadeFinal}`);
+    console.log(`🏷️ Melhor Recurso Selecionado: ${melhorRecurso}`);
+    console.log(`📦 Quantidade Calculada Respeitando a Taxa Premium: ${quantidadeFinal}`);
     return { [melhorRecurso]: quantidadeFinal };
 }
 
-// ✅ Função para validar e executar a venda automatizada
+// ✅ Função para validar e executar a venda automatizada apenas se a venda estiver ativada
 function validarVendaAutomatizadaMelhorTaxa() {
-    console.log("🔍 Testando Venda com Menor Taxa Premium (Corrigido)...");
+    console.log("🔍 Testando Venda com Menor Taxa Premium (Atualizado)...");
 
+    // ✅ Verificação centralizada: venda deve estar ativada no localStorage
     if (localStorage.getItem('sellActive') !== 'true') {
         console.warn("⚠️ Venda automatizada não está ativada. Encerrando execução.");
         return;
@@ -1376,6 +1375,7 @@ function validarVendaAutomatizadaMelhorTaxa() {
     preencherInputMelhorVenda();
 }
 
+// ✅ Função para preencher os inputs corretamente com validação e taxa premium
 // ✅ Função para preencher os inputs corretamente e clicar automaticamente nos botões
 function preencherInputMelhorVenda() {
     const recursosParaVenda = calcularRecursosParaVendaMelhor();
@@ -1390,7 +1390,7 @@ function preencherInputMelhorVenda() {
     // ✅ Limpar inputs antes de preencher
     Object.values(inputs).forEach(input => (input.value = ''));
 
-    // ✅ Preencher os inputs corretamente
+    // ✅ Preencher inputs se a quantidade for válida
     Object.entries(recursosParaVenda).forEach(([recurso, quantidade]) => {
         if (inputs[recurso] && quantidade > 0) {
             inputs[recurso].value = quantidade;
@@ -1401,13 +1401,14 @@ function preencherInputMelhorVenda() {
         }
     });
 
-    // ✅ Se a venda for válida, clicar no botão
+    // ✅ Se os critérios forem atendidos, clicar no botão "Calcular melhor oferta"
     if (vendaValida) {
         const botaoCalcularMelhorOferta = document.querySelector('input.btn-premium-exchange-buy');
         if (botaoCalcularMelhorOferta) {
             botaoCalcularMelhorOferta.click();
             console.log('✅ Botão "Calcular melhor oferta" clicado automaticamente!');
 
+            // ✅ Aguardar a interface processar antes de clicar em "Confirmar"
             setTimeout(() => {
                 const botaoConfirmar = document.querySelector('button.btn-confirm-yes');
                 if (botaoConfirmar) {
@@ -1416,7 +1417,7 @@ function preencherInputMelhorVenda() {
                 } else {
                     console.error('❌ Botão "Confirmar" não encontrado!');
                 }
-            }, 1500);
+            }, 1500); // ✅ Delay de segurança para garantir que a interface carregue
         } else {
             console.error('❌ Botão "Calcular melhor oferta" não encontrado!');
         }
@@ -1425,100 +1426,11 @@ function preencherInputMelhorVenda() {
     }
 }
 
-// ✅ Executar teste de venda automatizada
-console.log("🔍 Testando Venda Completa com Clique Automático (Corrigido)...");
+// ✅ Teste Completo: Executar apenas se a venda estiver ativada e clicar automaticamente nos botões
+console.log("🔍 Testando Venda Completa com Clique Automático...");
 validarVendaAutomatizadaMelhorTaxa();
 
 })();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  // Script para exibir informações de recursos, taxas e configurações definidas pelo usuário no Tribal Wars
-(function showGameSettingsAndResources() {
-    'use strict';
-
-    // Configurações definidas pelo usuário
-    const buyWoodRate = 100;       // Taxa de compra de Madeira
-    const buyClayRate = 100;       // Taxa de compra de Argila
-    const buyIronRate = 10;        // Taxa de compra de Ferro
-    const buyAmount = 2001;        // Quantidade a ser comprada por vez
-    const storageLimit = 20001;    // Limite de Armazenamento
-    const minStock = 100;          // Estoque mínimo permitido
-
-    /**
-     * Exibir as configurações definidas pelo usuário no console
-     */
-    function displayUserSettings() {
-        console.log('--- Configurações Definidas pelo Usuário ---');
-        console.log(`💡 Taxa de Compra Madeira: ${buyWoodRate}`);
-        console.log(`💡 Taxa de Compra Argila: ${buyClayRate}`);
-        console.log(`💡 Taxa de Compra Ferro: ${buyIronRate}`);
-        console.log(`💡 Quantidade de Compra por Vez: ${buyAmount}`);
-        console.log(`💡 Limite de Armazenamento: ${storageLimit}`);
-        console.log(`💡 Estoque Mínimo Permitido: ${minStock}`);
-    }
-
-    /**
-     * Função para exibir o valor de um recurso pelo ID e opcionalmente o atributo 'data-title'
-     * @param {string} elementId - ID do elemento a ser buscado
-     * @param {string} label - Rótulo para exibição no console
-     * @returns {number} Retorna o valor numérico do recurso ou 0 se não encontrado
-     */
-    function showElementValueById(elementId, label) {
-        var element = document.getElementById(elementId);
-        if (element) {
-            const value = parseInt(element.textContent.trim());
-            console.log(`${label}:`, value);
-            if (element.hasAttribute('data-title')) {
-                console.log(`${label} (Produção por hora):`, element.getAttribute('data-title'));
-            }
-            return value;
-        } else {
-            console.warn(`Elemento com ID "${elementId}" não encontrado.`);
-            return 0;
-        }
-    }
-
-    /**
-     * Função principal para exibir todas as informações do jogo e as configurações definidas
-     */
-    function displayAllResourcesAndSettings() {
-        displayUserSettings();  // Mostrar as configurações definidas pelo usuário
-        console.log('--- Informações de Recursos e Produção ---');
-        showElementValueById('premium_points', 'Pontos Premium');
-        showElementValueById('storage', 'Capacidade de Armazenamento');
-        showElementValueById('iron', 'Ferro');
-        showElementValueById('stone', 'Argila');
-        showElementValueById('wood', 'Madeira');
-    }
-
-    // Executar o script
-    displayAllResourcesAndSettings();
-
-})();
-
-
-
-
 
 
 
@@ -3715,7 +3627,7 @@ let hasExecutedBuildOrder = false;
 
 // Função principal para executar a lógica de construção automática
 async function executeBuildOrder() {
-    const villagePagePattern = /https:\/\/br132\.tribalwars\.com\.br\/game\.php\?village=\d+&screen=main/;
+    const villagePagePattern = /https:\/\/br131\.tribalwars\.com\.br\/game\.php\?village=\d+&screen=main/;
 
     if (!villagePagePattern.test(window.location.href) || !isBuildAutomationActive || hasExecutedBuildOrder) {
         return; // Não executa se a URL não for a correta ou a automação não estiver ativada
@@ -3830,7 +3742,7 @@ async function tryToBuild(id, level) {
 
 // Evento para iniciar a automação ao carregar a página
 window.addEventListener('load', () => {
-    const villagePagePattern = /https:\/\/br132\.tribalwars\.com\.br\/game\.php\?village=\d+&screen=main/;
+    const villagePagePattern = /https:\/\/br131\.tribalwars\.com\.br\/game\.php\?village=\d+&screen=main/;
     if (villagePagePattern.test(window.location.href) && isBuildAutomationActive) {
         console.log("Automação ativada e executando...");
         executeBuildOrder();
@@ -4666,6 +4578,7 @@ document.addEventListener('contextmenu', (event) => { // Use 'contextmenu' para 
 
 
 
+
 // Constants and Configuration
 const CONFIG = {
   SKIP_WALL: true,
@@ -4797,57 +4710,98 @@ const randomTime = (min, max) => Math.round(min + Math.random() * (max - min));
 
 
 
-(function () {
+
+
+
+
+
+(function() {
     'use strict';
 
-    // Constantes para o script
+    const ScriptData = {
+        name: "Auto notes from report",
+        version: "v2.5",
+        lastUpdate: "2024-05-16",
+        author: "xdam98",
+        authorContact: "Xico#7941 (Discord)"
+    };
+
     const LS_prefix = "xd";
     const translations = {
         pt_BR: {
             unknown: "Desconhecido",
             verifyReportPage: "O Script deve ser utilizado dentro de um relatório ofensivo ou defensivo!",
-            offensive: "Ofensiva ⚔️",
-            defensive: "Defensiva 🛡️",
-            probOffensive: "Provavelmente Ofensiva 🤔",
-            probDefensive: "Provavelmente Defensiva 🤨",
-            noSurvivors: "Nenhuma tropa sobreviveu 💀",
+            offensive: "Ofensiva",
+            defensive: "Defensiva",
+            probOffensive: "Provavelmente Ofensiva",
+            probDefensive: "Provavelmente Defensiva",
+            noSurvivors: "Nenhuma tropa sobreviveu",
             watchtower: "Torre ",
             wall: "Muralha ",
             firstChurch: "Igreja Principal",
             church: "Igreja",
             defensiveNukes: " fulls defesa",
-            noteCreated: "Nota criada ✅",
-            addReportTo: "Colocar relatório no:"
+            noteCreated: "Nota criada",
+            addReportTo: "Colocar relatório no:",
+            attacker: "Atacante",
+            defender: "Defensor"
         },
         en_DK: {
             unknown: "Unknown",
             verifyReportPage: "This script can only be run on a report screen.",
-            offensive: "Offensive ⚔️",
-            defensive: "Defensive 🛡️",
-            probOffensive: "Probably Offensive 🤔",
-            probDefensive: "Probably Defensive 🤨",
-            noSurvivors: "No troops survived 💀",
+            offensive: "Offensive",
+            defensive: "Defensive",
+            probOffensive: "Probably Offensive",
+            probDefensive: "Probably Defensive",
+            noSurvivors: "No troops survived",
             watchtower: "Watchtower",
             wall: "Wall",
             firstChurch: "First church",
             church: "Church",
             defensiveNukes: "deffensive nukes",
-            noteCreated: "Note created ✅",
-            addReportTo: "Add report to which village:"
+            noteCreated: "Note created",
+            addReportTo: "Add report to which village:",
+            attacker: "Attacker",
+            defender: "Defender"
         }
     };
 
-    // Função para obter traduções
     const _t = a => translations[game_data.locale]?.[a] || translations.pt_BR[a];
+    const initTranslations = () => localStorage.getItem(`${LS_prefix}_langWarning`) ? 1 : (void 0 === translations[game_data.locale] && UI.ErrorMessage(`No translation found for <b>${game_data.locale}</b>.`, 3e3), localStorage.setItem(`${LS_prefix}_langWarning`, 1), 0);
 
-    // Inicializa as traduções
-    const initTranslations = () => {
-        if (localStorage.getItem(`${LS_prefix}_langWarning`)) return 1;
-        if (!translations[game_data.locale]) {
-            console.warn(`No translation found for ${game_data.locale}.`);
+    const defaultSettings = {
+        includeWatchtower: true,
+        includeWall: true,
+        includeChurch: true,
+        includeDefensiveNukes: true,
+        markOffensiveColor: "#ff0000",
+        markDefensiveColor: "#0eae0e",
+        minOffensiveTroops: 3000,
+        minProbOffensiveTroops: 500,
+        minDefensiveTroops: 1000,
+        minProbDefensiveTroops: 500,
+        useCombinedTroopsForType: true,
+    };
+
+    let settings = { ...defaultSettings };
+
+    const loadSettings = () => {
+        try {
+            const storedSettings = localStorage.getItem(`${LS_prefix}_settings`);
+            if (storedSettings) {
+                settings = { ...defaultSettings, ...JSON.parse(storedSettings) };
+            }
+        } catch (e) {
+            console.error("Error loading settings:", e);
         }
-        localStorage.setItem(`${LS_prefix}_langWarning`, 1);
-        return 0;
+    };
+
+    const saveSettings = () => {
+        try {
+            localStorage.setItem(`${LS_prefix}_settings`, JSON.stringify(settings));
+        } catch (e) {
+            console.error("Error saving settings:", e);
+        }
     };
 
     // Objeto principal do script
@@ -4903,124 +4857,92 @@ const randomTime = (min, max) => Math.round(min + Math.random() * (max - min));
                 arqueirosAtivos: false
             }
         },
-        // Verifica se está na página de relatório
-        verificarPagina: function () {
-            const isReportPage = /(screen\=report){1}|(view\=){1}\w+/g.test(window.location.href);
-            if (!isReportPage) {
-                console.warn(_t("verifyReportPage"));
-            }
-            return isReportPage;
+        // Verifica se o script está sendo executado na página correta (relatório)
+        verificarPagina: function() {
+            const url = window.location.href;
+            return url.includes("screen=report") && url.includes("&mode=all&group_id=-1&view=");
         },
-        // Inicializa os dados do script
-        initDadosScript: function () {
+        // Inicializa os dados do script, extraindo informações da página
+        initDadosScript: function() {
             this.dados.mundo.arqueirosAtivos = game_data.units.includes("archer");
-
-            const numberOfUnits = this.dados.mundo.arqueirosAtivos ? 10 : 8;
-            this.dados.aldeia.ofensiva.tropas.totais = new Array(numberOfUnits).fill(0);
-            this.dados.aldeia.defensiva.tropas.totais = new Array(numberOfUnits).fill(0);
-            this.dados.aldeia.defensiva.tropas.fora.totais = new Array(numberOfUnits).fill(0);
-            this.dados.aldeia.defensiva.tropas.dentro.totais = new Array(numberOfUnits).fill(0);
+            const numUnits = this.dados.mundo.arqueirosAtivos ? 10 : 8;
+            this.dados.aldeia.defensiva.tropas.totais = new Array(numUnits).fill(0);
+            this.dados.aldeia.defensiva.tropas.fora.totais = new Array(numUnits).fill(0);
+            this.dados.aldeia.defensiva.tropas.dentro.totais = new Array(numUnits).fill(0);
             this.dados.mundo.fazendaPorTropa = this.dados.mundo.arqueirosAtivos ? [1, 1, 1, 1, 2, 4, 5, 6, 5, 8] : [1, 1, 1, 2, 4, 6, 5, 8];
 
-            this.extrairInformacoesJogadores();
-            this.extrairInformacoesAldeias();
-            this.extrairPerdasTropas();
-            this.extrairTropasDefensivasFora();
-            this.extrairTropasDefensivasDentro();
-            this.extrairTropasOfensivas();
-            this.extrairEdificiosDefensivos();
-        },
-
-        // Extrai informações dos jogadores envolvidos no relatório
-        extrairInformacoesJogadores: function () {
             const nomeAtacante = $("#attack_info_att > tbody > tr:nth-child(1) > th:nth-child(2) > a").text();
             const nomeDefensor = $("#attack_info_def > tbody > tr:nth-child(1) > th:nth-child(2) > a").text();
+            const sitterOffset = game_data.player.sitter !== "0" ? 4 : 3;
+
+            this.dados.aldeia.ofensiva.idAldeia = $("#attack_info_att > tbody > tr:nth-child(2) > td:nth-child(2) > span > a:nth-child(1)").url().split("=")[sitterOffset];
+            this.dados.aldeia.defensiva.idAldeia = $("#attack_info_def > tbody > tr:nth-child(2) > td:nth-child(2) > span > a:nth-child(1)").url().split("=")[sitterOffset];
 
             if (nomeDefensor === this.dados.player.nomePlayer) {
                 this.dados.player.playerEstaDefender = true;
             } else if (nomeAtacante === this.dados.player.nomePlayer) {
                 this.dados.player.playerEstaAtacar = true;
             }
-            this.dados.player.nomeAdversario = this.dados.player.playerEstaAtacar ? nomeDefensor : nomeAtacante;
-        },
 
-        // Extrai informações das aldeias envolvidas no relatório
-        extrairInformacoesAldeias: function () {
-            const sitterOffset = game_data.player.sitter === "0" ? 3 : 4;
-
-            const atacanteLink = $("#attack_info_att > tbody > tr:nth-child(2) > td:nth-child(2) > span > a:nth-child(1)");
-            const defensorLink = $("#attack_info_def > tbody > tr:nth-child(2) > td:nth-child(2) > span > a:nth-child(1)");
-
-            if (atacanteLink.length) {
-                this.dados.aldeia.ofensiva.idAldeia = atacanteLink.attr("href").split("=")[sitterOffset];
+            if (this.dados.player.playerEstaDefender) {
+                this.extrairTropas(
+                    "#attack_info_att_units",
+                    "tr:nth-child(2)",
+                    "td.unit-item",
+                    this.dados.aldeia.defensiva.tropas.dentro
+                );
+            } else if (this.dados.player.playerEstaAtacar) {
+                this.extrairTropasFora();
+                this.extrairTropas(
+                    "#attack_info_def_units",
+                    "tr:nth-child(2)",
+                    "td.unit-item",
+                    this.dados.aldeia.defensiva.tropas.dentro
+                );
             }
-            if (defensorLink.length) {
-                this.dados.aldeia.defensiva.idAldeia = defensorLink.attr("href").split("=")[sitterOffset];
-            }
-        },
-        // Extrai as perdas de tropas do relatório
-        extrairPerdasTropas: function () {
-            this.dados.aldeia.ofensiva.tropas.perdas = this.extrairPerdas("#attack_info_att_units > tbody > tr:nth-child(3) > td.unit-item");
-            this.dados.aldeia.defensiva.tropas.perdas = this.extrairPerdas("#attack_info_def_units > tbody > tr:nth-child(3) > td.unit-item");
-        },
-        // Função auxiliar para extrair perdas de tropas
-        extrairPerdas: function (selector) {
-            const perdas = [];
-            $(selector).each((index, element) => {
-                perdas.push(parseInt(element.textContent) || 0);
-            });
-            return perdas;
-        },
 
-        // Extrai as tropas defensivas fora da aldeia
-        extrairTropasDefensivasFora: function () {
-            const tropasForaTable = $("#attack_spy_away > tbody > tr:nth-child(1) > th");
-            if (tropasForaTable.length) {
+            this.extrairEdificios();
+        },
+       extrairTropas: function(seletorTabela, seletorLinha, seletorCelula, tropas) {
+    if (!$(seletorTabela).length) return;
+
+    const ignorarPerdasAtacante = this.dados.player.playerEstaAtacar && seletorTabela === "#attack_info_att_units";
+
+    $(seletorTabela + " > tbody > " + seletorLinha).each((_, linha) => {
+        $(linha).find(seletorCelula).each((indexCelula, celula) => {
+            const quantidade = parseInt(celula.textContent) || 0;
+
+            // Ignora células de tropas perdidas se for atacante
+            if (ignorarPerdasAtacante && $(celula).parent().find('td.unit-item').index(celula) % 2 !== 0) {
+                return; // Ignora células de perdas
+            }
+
+            if (indexCelula < tropas.totais.length) {
+                tropas.totais[indexCelula] = quantidade;
+            }
+            this.calcularTropasOfensivasDefensivas(quantidade, indexCelula, tropas);
+        });
+    });
+},
+
+
+        extrairTropasFora: function() {
+            if ($("#attack_spy_away > tbody > tr:nth-child(1) > th").length) {
                 this.dados.aldeia.defensiva.tropas.fora.visiveis = true;
-                const tropasForaSelector = "#attack_spy_away > tbody > tr:nth-child(2) > td > table > tbody > tr:nth-child(2) > td";
-                $(tropasForaSelector).each((index, element) => {
-                    const quantidade = parseInt(element.textContent) || 0;
-                    if (index < this.dados.aldeia.defensiva.tropas.totais.length) {
-                        this.dados.aldeia.defensiva.tropas.fora.totais[index] = quantidade;
-                    }
-                    this.calcularTropasOfensivasDefensivas(quantidade, index, this.dados.aldeia.defensiva.tropas.fora);
-                });
+                this.extrairTropas(
+                    "#attack_spy_away > tbody > tr:nth-child(2) > td > table > tbody > tr:nth-child(2)",
+                    "",
+                    "td",
+                    this.dados.aldeia.defensiva.tropas.fora
+                );
             }
         },
-
-        // Extrai as tropas defensivas dentro da aldeia
-        extrairTropasDefensivasDentro: function () {
-            const tropasDentroTable = $("#attack_info_def_units > tbody > tr:nth-child(2) > td");
-            this.dados.aldeia.defensiva.tropas.visiveis = tropasDentroTable.length > 0;
-
-            if (this.dados.aldeia.defensiva.tropas.visiveis) {
-                $("#attack_info_def_units > tbody > tr:nth-child(2) > td.unit-item").each((index, element) => {
-                    const quantidade = parseInt(element.textContent) || 0;
-                    if (index < this.dados.aldeia.defensiva.tropas.totais.length) {
-                        this.dados.aldeia.defensiva.tropas.dentro.totais[index] = quantidade;
-                    }
-                    this.calcularTropasOfensivasDefensivas(quantidade, index, this.dados.aldeia.defensiva.tropas.dentro);
-                });
-            }
-        },
-        // Extrai as tropas ofensivas da aldeia atacante
-        extrairTropasOfensivas: function () {
-            $("#attack_info_att_units > tbody > tr:nth-child(2) > td.unit-item").each((index, element) => {
-                const quantidade = parseInt(element.textContent) || 0;
-                if (index < this.dados.aldeia.ofensiva.tropas.totais.length) {
-                    this.dados.aldeia.ofensiva.tropas.totais[index] = quantidade;
-                }
-                this.calcularTropasOfensivasDefensivas(quantidade, index, this.dados.aldeia.ofensiva.tropas);
-            });
-        },
-        // Extrai os edifícios defensivos da aldeia
-        extrairEdificiosDefensivos: function () {
-            const edificiosTable = $("#attack_spy_buildings_left > tbody > tr:nth-child(1) > th:nth-child(1)");
-            if (edificiosTable.length) {
+        extrairEdificios: function() {
+            if ($("#attack_spy_buildings_left > tbody > tr:nth-child(1) > th:nth-child(1)").length) {
                 this.dados.aldeia.defensiva.edificios.edificiosVisiveis = true;
                 $("table[id^='attack_spy_buildings_'] > tbody > tr:gt(0) > td > img").each((index, element) => {
                     const edificio = element.src.split("/")[7].replace(".png", "");
-                    const nivel = parseInt(element.parentNode.parentNode.childNodes[3].textContent) || 0;
+                    const nivel = parseInt(element.parentNode.parentNode.childNodes[3].textContent);
                     if (edificio === "watchtower") {
                         this.dados.aldeia.defensiva.edificios.torre = [true, nivel];
                     } else if (edificio === "church_f") {
@@ -5033,52 +4955,64 @@ const randomTime = (min, max) => Math.round(min + Math.random() * (max - min));
                 });
             }
         },
-        // Calcula as tropas ofensivas e defensivas
-        calcularTropasOfensivasDefensivas: function (quantidade, index, tropas) {
-            const { arqueirosAtivos, fazendaPorTropa } = this.dados.mundo;
-            if (arqueirosAtivos) {
-                if ([2, 5, 6, 8].includes(index)) {
-                    tropas.ofensivas += quantidade * fazendaPorTropa[index];
-                } else if (![0, 1, 3, 7, 9].includes(index)) {
-                    tropas.defensivas += quantidade * fazendaPorTropa[index];
-                }
-            } else {
-                if ([2, 4, 6].includes(index)) {
-                    tropas.ofensivas += quantidade * fazendaPorTropa[index];
-                } else if (![0, 1, 5, 7].includes(index)) {
-                    tropas.defensivas += quantidade * fazendaPorTropa[index];
-                }
+        // Função auxiliar para calcular tropas ofensivas e defensivas
+        calcularTropasOfensivasDefensivas: function(quantidade, index, tropas) {
+            const isArcherWorld = this.dados.mundo.arqueirosAtivos;
+            const offensiveUnits = isArcherWorld ? [2, 5, 6, 8] : [2, 4, 6];
+            const defensiveUnits = isArcherWorld ? [4, 7, 9] : [3, 5, 7];
+
+            if (offensiveUnits.includes(index)) {
+                tropas.ofensivas += quantidade * this.dados.mundo.fazendaPorTropa[index];
+            } else if (defensiveUnits.includes(index)) {
+                tropas.defensivas += quantidade * this.dados.mundo.fazendaPorTropa[index];
             }
         },
-        // Determina o tipo da aldeia
-        getTipoAldeia: function () {
-            const { defensiva, ofensiva } = this.dados.aldeia;
+        // Determina o tipo da aldeia (ofensiva, defensiva, etc.)
+        getTipoAldeia: function() {
+            const defensiva = this.dados.aldeia.defensiva;
+            const ofensiva = this.dados.aldeia.ofensiva;
 
-            const calcularTipo = (tropas, tipo) => {
-                if (tropas.ofensivas > 3000) return _t("offensive");
-                if (tropas.ofensivas > 500) return _t("probOffensive");
-                if (tropas.defensivas > 1000) return _t("defensive");
-                if (tropas.defensivas > 500) return _t("probDefensive");
-                return tipo;
+            const checkTroops = (troops, isOutside = false) => {
+                let type = _t("unknown");
+                const minOffensive = settings.minOffensiveTroops;
+                const minProbOffensive = settings.minProbOffensiveTroops;
+                const minDefensive = settings.minDefensiveTroops;
+                const minProbDefensive = settings.minProbDefensiveTroops;
+
+                if (troops.ofensivas > minOffensive) {
+                    type = _t("offensive");
+                } else if (troops.ofensivas > minProbOffensive) {
+                    type = _t("probOffensive");
+                } else if (troops.defensivas > minDefensive) {
+                    type = _t("defensive");
+                } else if (troops.defensivas > minProbDefensive) {
+                    type = _t("probDefensive");
+                } else if (settings.useCombinedTroopsForType && troops.defensivas + troops.ofensivas > minProbDefensive) {
+                    if (troops.ofensivas > troops.defensivas) {
+                        type = _t("probOffensive");
+                    } else if (troops.defensivas >= troops.ofensivas) {
+                        type = _t("probDefensive");
+                    }
+                }
+                if (isOutside) {
+                    defensiva.tropas.apoios += Math.round(troops.defensivas / 20000 * 10) / 10;
+                }
+                return type;
             };
 
             if (defensiva.tropas.visiveis) {
-                defensiva.tipoAldeia = calcularTipo(defensiva.tropas.dentro, _t("noSurvivors"));
+                defensiva.tipoAldeia = checkTroops(defensiva.tropas.dentro);
                 defensiva.tropas.apoios = Math.round(defensiva.tropas.dentro.defensivas / 20000 * 10) / 10;
+            } else {
+                defensiva.tipoAldeia = _t("noSurvivors");
             }
 
             if (defensiva.tropas.fora.visiveis) {
-                defensiva.tipoAldeia = calcularTipo(defensiva.tropas.fora, defensiva.tipoAldeia);
-                if (defensiva.tropas.fora.defensivas + defensiva.tropas.fora.ofensivas > 1000) {
-                    if (defensiva.tropas.fora.ofensivas > defensiva.tropas.fora.defensivas) {
-                        defensiva.tipoAldeia = _t("probOffensive");
-                    } else if (defensiva.tropas.fora.defensivas >= defensiva.tropas.fora.ofensivas) {
-                        defensiva.tipoAldeia = _t("probDefensive");
-                    }
+                const outsideType = checkTroops(defensiva.tropas.fora, true);
+                if (defensiva.tipoAldeia === _t("noSurvivors") || defensiva.tipoAldeia === _t("unknown")) {
+                    defensiva.tipoAldeia = outsideType;
                 }
-                defensiva.tropas.apoios += Math.round(defensiva.tropas.fora.defensivas / 20000 * 10) / 10;
             }
-
 
             if (ofensiva.tropas.ofensivas > ofensiva.tropas.defensivas) {
                 ofensiva.tipoAldeia = _t("offensive");
@@ -5086,180 +5020,129 @@ const randomTime = (min, max) => Math.round(min + Math.random() * (max - min));
                 ofensiva.tipoAldeia = _t("defensive");
             }
         },
-        // Gera o texto da nota
-        geraTextoNota: function () {
-            let tipoAldeia;
-            const codigoRelatorio = $("#report_export_code").text();
-            const textoRelatorio = $("#content_value > table > tbody > tr > td:nth-child(2) > table > tbody > tr > td > table:nth-child(2) > tbody > tr:nth-child(2)").text().replace(/\s+/g, " ").replace(/.{5}$/g, "");
-            let textoNota = "";
-            const nomeAdversario = this.dados.player.nomeAdversario;
-            const { ofensiva, defensiva } = this.dados.aldeia;
-            let frasesSarcasticas = [];
-            let perdasOfensiva = ofensiva.tropas.perdas.reduce((acc, val) => acc + val, 0);
-            let perdasDefensiva = defensiva.tropas.perdas.reduce((acc, val) => acc + val, 0);
+        // Gera o texto da nota a ser adicionada à aldeia
+        geraTextoNota: function() {
+    let tipoAldeia,
+        codigoRelatorio = $("#report_export_code").text(),
+        textoRelatorio = "",
+        textoNota = "";
 
-            if (this.dados.player.playerEstaAtacar) {
-                if (perdasOfensiva > perdasDefensiva) {
-                    frasesSarcasticas = [
-                        `Parabéns, ${nomeAdversario}, você arrasou! (com as suas tropas).`,
-                        `Que vitória gloriosa, ${nomeAdversario}! (quase não sobrou ninguém).`,
-                        `Você mostrou sua força, ${nomeAdversario}! (e perdeu tudo no caminho).`,
-                        `Impressionante, ${nomeAdversario}, sua estratégia é única! (e desastrosa).`,
-                        `Excelente trabalho, ${nomeAdversario}! (se o objetivo era perder tudo, claro).`,
-                    ];
-                } else if (perdasOfensiva < perdasDefensiva) {
-                    frasesSarcasticas = [
-                        `Uau, ${nomeAdversario}, que ataque de mestre! (espero que tenha um plano B).`,
-                        `${nomeAdversario}, sua tática é realmente... inovadora! (se inovação significa perder).`,
-                        `Incrível, ${nomeAdversario}, você mostrou toda sua capacidade! (de perder tropas).`,
-                        `Que performance, ${nomeAdversario}! (os defensores estão rindo agora).`,
-                        `Sua estratégia é impecável, ${nomeAdversario}! (se o objetivo era falhar, claro).`,
-                    ];
-                } else {
-                    frasesSarcasticas = [
-                        `Ah, que surpresa, ${nomeAdversario}... mais um relatório.`,
-                        `Uau, ${nomeAdversario}, que análise profunda! 🙄`,
-                        `Isso aqui é mais emocionante que novela, ${nomeAdversario}.`,
-                        `Parabéns, ${nomeAdversario}, você descobriu que a aldeia existe. 👏`,
-                        `Não sei como viveria sem essa informação, ${nomeAdversario}. 😒`,
-                        `Meu deus, que relatório... 😴, ${nomeAdversario}`,
-                        `Que relatório fascinante, ${nomeAdversario}, quase dormi lendo.`,
-                        `Estou impressionado com tanta informação, ${nomeAdversario}. 😐`,
-                        `Que nível de estratégia, ${nomeAdversario}! 🤯`,
-                    ];
-                }
-            } else if (this.dados.player.playerEstaDefender) {
-                if (perdasDefensiva < perdasOfensiva) {
-                    frasesSarcasticas = [
-                        `Defesa impecável, ${nomeAdversario}! (os atacantes não viram de onde veio).`,
-                        `Que resistência, ${nomeAdversario}! (os atacantes fugiram com o rabo entre as pernas).`,
-                        `Você é um muro, ${nomeAdversario}! (os atacantes nem chegaram perto).`,
-                        `Impressionante, ${nomeAdversario}, você é o verdadeiro guardião! (da sua aldeia).`,
-                        `Excelente trabalho, ${nomeAdversario}! (a sua aldeia está a salvo).`,
-                    ];
-                } else if (perdasDefensiva > perdasOfensiva) {
-                    frasesSarcasticas = [
-                        `Ah, ${nomeAdversario}, que defesa... (precisando de tropas?).`,
-                        `Uau, ${nomeAdversario}, que resistência! (quase não sobrou ninguém).`,
-                        `${nomeAdversario}, sua defesa é realmente... algo! (se algo significa perder tropas).`,
-                        `Incrível, ${nomeAdversario}, você mostrou toda sua capacidade! (de perder).`,
-                        `Que performance, ${nomeAdversario}! (os atacantes estão comemorando agora).`,
-                    ];
-                } else {
-                    frasesSarcasticas = [
-                        `Ah, que surpresa, ${nomeAdversario}... mais um relatório.`,
-                        `Uau, ${nomeAdversario}, que análise profunda! 🙄`,
-                        `Isso aqui é mais emocionante que novela, ${nomeAdversario}.`,
-                        `Parabéns, ${nomeAdversario}, você descobriu que a aldeia existe. 👏`,
-                        `Não sei como viveria sem essa informação, ${nomeAdversario}. 😒`,
-                        `Meu deus, que relatório... 😴, ${nomeAdversario}`,
-                        `Que relatório fascinante, ${nomeAdversario}, quase dormi lendo.`,
-                        `Estou impressionado com tanta informação, ${nomeAdversario}. 😐`,
-                        `Que nível de estratégia, ${nomeAdversario}! 🤯`,
-                    ];
-                }
-            } else {
-                frasesSarcasticas = [
-                    `Ah, que surpresa, ${nomeAdversario}... mais um relatório.`,
-                    `Uau, ${nomeAdversario}, que análise profunda! 🙄`,
-                    `Isso aqui é mais emocionante que novela, ${nomeAdversario}.`,
-                    `Parabéns, ${nomeAdversario}, você descobriu que a aldeia existe. 👏`,
-                    `Não sei como viveria sem essa informação, ${nomeAdversario}. 😒`,
-                    `Meu deus, que relatório... 😴, ${nomeAdversario}`,
-                    `Que relatório fascinante, ${nomeAdversario}, quase dormi lendo.`,
-                    `Estou impressionado com tanta informação, ${nomeAdversario}. 😐`,
-                    `Que nível de estratégia, ${nomeAdversario}! 🤯`,
-                ];
-            }
+    if (this.dados.player.playerEstaAtacar) {
+        tipoAldeia = this.dados.aldeia.defensiva.tipoAldeia;
+        const nomeAldeiaInimiga = $("#attack_info_def > tbody > tr:nth-child(1) > th:nth-child(2) > a").text();
+        textoRelatorio = nomeAldeiaInimiga;
 
+        // Ignorar perdas do atacante na nota
+        textoNota += `[b]${_t("attacker")}:[/b] ${this.dados.aldeia.ofensiva.tipoAldeia}`;
+    } else if (this.dados.player.playerEstaDefender) {
+        tipoAldeia = this.dados.aldeia.ofensiva.tipoAldeia;
+        const nomeAldeiaInimiga = $("#attack_info_att > tbody > tr:nth-child(1) > th:nth-child(2) > a").text();
+        textoRelatorio = nomeAldeiaInimiga;
+    }
 
-            if (!this.dados.aldeia.defensiva.tropas.visiveis) {
-                textoNota += `[b][size=6] Todo mundo na moita 🌿 [/size][/b]`;
-            }
+    const color = (tipoAldeia === _t("offensive") || tipoAldeia === _t("probOffensive")) ? settings.markOffensiveColor : settings.markDefensiveColor;
+    textoNota += `|[color=${color}][b]${tipoAldeia}[/b][/color]|`;
 
-            const randomSarcasm = frasesSarcasticas[Math.floor(Math.random() * frasesSarcasticas.length)];
+    if (this.dados.player.playerEstaAtacar) {
+        if (settings.includeWatchtower && this.dados.aldeia.defensiva.edificios.torre[0]) {
+            textoNota += `[building]watchtower[/building] ${_t("watchtower")}${this.dados.aldeia.defensiva.edificios.torre[1]}|`;
+        }
+        if (settings.includeWall && this.dados.aldeia.defensiva.edificios.muralha[0]) {
+            textoNota += `[building]wall[/building] ${_t("wall")}${this.dados.aldeia.defensiva.edificios.muralha[1]}|`;
+        }
+        if (settings.includeChurch && this.dados.aldeia.defensiva.edificios.igrejaPrincipal[0]) {
+            textoNota += `[building]church_f[/building] ${_t("firstChurch")}|`;
+        }
+        if (settings.includeChurch && this.dados.aldeia.defensiva.edificios.igreja[0]) {
+            textoNota += `[building]church_f[/building] ${_t("church")} ${this.dados.aldeia.defensiva.edificios.igreja[1]}|`;
+        }
+        if (settings.includeDefensiveNukes && this.dados.aldeia.defensiva.tropas.visiveis && tipoAldeia !== _t("offensive") && tipoAldeia !== _t("probOffensive")) {
+            textoNota += `${this.dados.aldeia.defensiva.tropas.apoios}${_t("defensiveNukes")}|`;
+        }
+    }
 
-            if (this.dados.player.playerEstaAtacar || this.dados.player.playerQuerInfoDefensor) {
-                tipoAldeia = this.dados.aldeia.defensiva.tipoAldeia;
-            } else if (this.dados.player.playerEstaAtacar && !this.dados.player.playerQuerInfoAtacante) {
-                tipoAldeia = this.dados.aldeia.ofensiva.tipoAldeia;
-            } else {
-                tipoAldeia = this.dados.aldeia.defensiva.tipoAldeia;
-            }
+    textoNota += "[b][size=6]xD[/size][/b]";
+    textoNota += `\n\n[b]${textoRelatorio}[/b]`;
+    textoNota += `${codigoRelatorio}`;
 
-            textoNota += `|[color=#${tipoAldeia.includes(_t("offensive")) || tipoAldeia.includes(_t("probOffensive")) ? "ff0000" : "0eae0e"}][b]${tipoAldeia}[/b][/color]|`;
+    return textoNota;
+},
 
-            if (this.dados.player.playerEstaAtacar || this.dados.player.playerQuerInfoDefensor) {
-                const { edificios, tropas } = this.dados.aldeia.defensiva;
-                if (edificios.torre[0]) {
-                    textoNota += `[building]watchtower[/building] ${_t("watchtower")}${edificios.torre[1]}|`;
-                }
-                if (edificios.muralha[0]) {
-                    textoNota += `[building]wall[/building] ${_t("wall")}${edificios.muralha[1]}|`;
-                }
-                if (edificios.igrejaPrincipal[0]) {
-                    textoNota += `[building]church_f[/building] ${_t("firstChurch")}|`;
-                }
-                if (edificios.igreja[0]) {
-                    textoNota += `[building]church_f[/building] ${_t("church")} ${edificios.igreja[1]}|`;
-                }
-                if (tropas.visiveis && !tipoAldeia.includes(_t("offensive")) && !tipoAldeia.includes(_t("probOffensive"))) {
-                    textoNota += `${tropas.apoios}${_t("defensiveNukes")}|`;
-                }
-            }
-
-            textoNota += `[b][size=6]${randomSarcasm}[/size][/b]`;
-            textoNota += `\n\n[b]${textoRelatorio}[/b]`;
-            textoNota += codigoRelatorio;
-
-            return textoNota;
-        },
         // Escreve a nota na aldeia
-        escreveNota: function () {
-            let nota;
-            let aldeiaId;
-            const apiURL = `https://${location.hostname}/game.php?village=${game_data.village.id}&screen=api&ajaxaction=village_note_edit&h=${game_data.csrf}&client_time=${Math.round(Timing.getCurrentServerTime() / 1e3)}`;
+        escreveNota: async function() {
+            let nota, aldeiaId;
 
             if (this.dados.player.playerEstaAtacar || this.dados.player.playerQuerInfoDefensor) {
                 aldeiaId = parseInt(this.dados.aldeia.defensiva.idAldeia);
-            } else if (this.dados.player.playerEstaDefender) {
-                aldeiaId = parseInt(this.dados.aldeia.defensiva.idAldeia);
-            }
-            else {
-                aldeiaId = parseInt(this.dados.aldeia.defensiva.idAldeia);
+            } else {
+                aldeiaId = parseInt(this.dados.aldeia.ofensiva.idAldeia);
             }
 
-            nota = this.geraTextoNota();
-            $.post(apiURL, {
-                note: nota,
-                village_id: aldeiaId,
-                h: game_data.csrf
-            }, function (data) {
-                console.log(_t("noteCreated"));
+            if (this.dados.player.playerEstaAtacar || this.dados.player.playerEstaDefender) {
+                nota = this.geraTextoNota();
+                await this.saveNote(nota, aldeiaId);
+            } else {
+                this.showDialog();
+            }
+        },
+        showDialog: function() {
+            const dialogContent = $(`<div class="center"> ${_t("addReportTo")} </div>`);
+            const buttons = $(`<div class="center"><button class="btn btn-confirm-yes atk">${_t("attacker")}</button><button class="btn btn-confirm-yes def">${_t("defender")}</button></div>`);
+            const dialog = dialogContent.add(buttons);
+
+            Dialog.show("relatorio_notas", dialog);
+
+            buttons.find("button.atk").click(async () => {
+                this.dados.player.playerQuerInfoAtacante = true;
+                const nota = this.geraTextoNota();
+                await this.saveNote(nota, this.dados.aldeia.ofensiva.idAldeia);
+                Dialog.close();
             });
 
+            buttons.find("button.def").click(async () => {
+                this.dados.player.playerQuerInfoDefensor = true;
+                const nota = this.geraTextoNota();
+                await this.saveNote(nota, this.dados.aldeia.defensiva.idAldeia);
+                Dialog.close();
+            });
+        },
+        saveNote: async function(note, villageId) {
+            const apiURL = game_data.player.sitter === "0" ?
+                `https://${location.hostname}/game.php?village=${game_data.village.id}&screen=api&ajaxaction=village_note_edit&h=${game_data.csrf}&client_time=${Math.round(Timing.getCurrentServerTime() / 1e3)}` :
+                `https://${location.hostname}/game.php?village=${game_data.village.id}&screen=api&ajaxaction=village_note_edit&t=${game_data.player.id}`;
+            try {
+                await $.post(apiURL, {
+                    note: note,
+                    village_id: villageId,
+                    h: game_data.csrf
+                });
+                UI.SuccessMessage(_t("noteCreated"), 2000);
+            } catch (error) {
+                console.error("Error saving note:", error);
+                UI.ErrorMessage("Error saving note.", 3000);
+            }
         },
         // Inicia o script
-        start: function () {
+        start: async function() {
             if (this.verificarPagina()) {
                 this.initDadosScript();
                 this.getTipoAldeia();
-                this.escreveNota();
+                await this.escreveNota();
             }
         }
     };
 
-    // Inicializa o script
+    // Inicializa as traduções e inicia o script
     if (initTranslations()) {
+        loadSettings();
         CriarRelatorioNotas.start();
     } else {
-        setTimeout(function () {
-            CriarRelatorioNotas.start();
+        setTimeout(async () => {
+            loadSettings();
+            await CriarRelatorioNotas.start();
         }, 3000);
     }
 })();
-
-
 
 
 
@@ -5280,3 +5163,4 @@ const randomTime = (min, max) => Math.round(min + Math.random() * (max - min));
     // Executa a verificação a cada 2 segundos
     setInterval(clicarBotaoProtecao, 2000);
 })();
+
