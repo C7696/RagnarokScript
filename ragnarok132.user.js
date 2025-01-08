@@ -680,7 +680,7 @@ window.addEventListener('load', performAutoLogin);
     // Redireciona para uma URL específica e simula o pressionamento da tecla "D"
 function redirectTo(screen) {
     const villageId = new URLSearchParams(window.location.search).get('village');
-    const url = `https://br131.tribalwars.com.br/game.php?village=${villageId}&${screen}`;
+    const url = `https://br132.tribalwars.com.br/game.php?village=${villageId}&${screen}`;
     const randomTime = Math.floor(Math.random() * 11 + 10) * 1000; // 10 a 20 segundos
     setTimeout(() => {
         window.location.href = url;
@@ -5163,4 +5163,3 @@ const randomTime = (min, max) => Math.round(min + Math.random() * (max - min));
     // Executa a verificação a cada 2 segundos
     setInterval(clicarBotaoProtecao, 2000);
 })();
-
