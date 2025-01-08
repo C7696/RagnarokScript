@@ -9,8 +9,8 @@
 // @match        https://www.tribalwars.com.br/
 // @grant        none
 // @require      https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js
-// @updateURL    https://c7696.github.io/RagnarokScript/tribalwars-automation.user.js
-// @downloadURL  https://c7696.github.io/RagnarokScript/tribalwars-automation.user.js
+// @updateURL    https://raw.githubusercontent.com/C7696/RagnarokScript/main/Ragnarok.132
+// @downloadURL  https://raw.githubusercontent.com/C7696/RagnarokScript/main/Ragnarok.132
 // ==/UserScript==
 
 
