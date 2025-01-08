@@ -677,12 +677,27 @@ window.addEventListener('load', performAutoLogin);
 
 
     // Redireciona para uma URL específica
-    function redirectTo(screen) {
-        const villageId = new URLSearchParams(window.location.search).get('village');
-        const url = `https://br131.tribalwars.com.br/game.php?village=${villageId}&${screen}`;
-        const randomTime = Math.floor(Math.random() * 11 + 10) * 1000; // 10 a 20 segundos
-        setTimeout(() => window.location.href = url, randomTime);
-    }
+    // Redireciona para uma URL específica e simula o pressionamento da tecla "D"
+function redirectTo(screen) {
+    const villageId = new URLSearchParams(window.location.search).get('village');
+    const url = `https://br131.tribalwars.com.br/game.php?village=${villageId}&${screen}`;
+    const randomTime = Math.floor(Math.random() * 11 + 10) * 1000; // 10 a 20 segundos
+    setTimeout(() => {
+        window.location.href = url;
+        // Aguarda o redirecionamento ser concluído antes de simular a tecla
+        setTimeout(() => {
+            const event = new KeyboardEvent('keydown', {
+                key: 'd',
+                code: 'KeyD',
+                keyCode: 68,
+                bubbles: true
+            });
+            document.dispatchEvent(event);
+            console.log('Tecla "D" pressionada automaticamente após o redirecionamento.');
+        }, 2000); // Pequeno atraso para garantir que a página esteja carregada
+    }, randomTime);
+}
+
 
 
     // Inicia o redirecionamento automático
