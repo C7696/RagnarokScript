@@ -4354,125 +4354,69 @@ function closePopup() {
 
 
 
-// Função genérica para recrutar tropas
-function recruitTroops(unitType, dailyGoalKey, totalGoalKey, recruitAmount, inputSelector, maxSelector, buttonSelector) {
-    // Obtém as metas diárias e gerais
+// Função genérica para recrutar tropas (corrigida)
+function recruitTroops(unitType, dailyGoalKey, totalGoalKey, recruitAmount, unitId) {
     const dailyGoal = recruitmentConfig[dailyGoalKey] || 0;
     const totalGoal = recruitmentConfig[totalGoalKey] || 0;
 
+    const inputField = document.getElementById(unitId); // Corrigido para usar o ID
+    const maxUnitsElement = document.getElementById(`${unitId}_a`);
+    const recruitButton = inputField.closest('form').querySelector('input.btn.btn-recruit');
 
-    // Campo de entrada, máximo disponível e botão de recrutamento
-    const inputField = document.querySelector(inputSelector);
-    const maxUnits = parseInt(document.querySelector(maxSelector).textContent.replace(/[^\d]/g, '')) || 0;
-    const recruitButton = document.querySelector(buttonSelector);
-
-
-    if (!inputField || !recruitButton) {
-        console.warn(`Campo ou botão de recrutamento para ${unitType} não encontrado!`);
+    if (!inputField || !maxUnitsElement || !recruitButton) {
+        console.warn(`Elemento não encontrado para: ${unitType}`);
         return;
     }
 
+    const maxUnits = parseInt(maxUnitsElement.textContent.replace(/\D/g, ''), 10) || 0;
 
-    // Verifica as metas
     if (totalGoal <= 0 || dailyGoal <= 0) {
         console.log(`Meta atingida para ${unitType}. Nenhum recrutamento realizado.`);
         return;
     }
 
-
-    // Calcula o valor a recrutar (considerando diário, geral, máximo disponível e o valor de recrutamento mínimo)
+    // Cálculo da quantidade a recrutar
     const recruitValue = Math.min(recruitAmount, maxUnits, dailyGoal, totalGoal);
 
-
     if (recruitValue > 0) {
-        // Preenche o campo com o valor e atualiza as metas restantes
         inputField.value = recruitValue;
         recruitmentConfig[dailyGoalKey] -= recruitValue;
         recruitmentConfig[totalGoalKey] -= recruitValue;
-
-
-        // Salva as novas metas no localStorage
         saveRecruitmentConfig();
-
-
-        // Clica no botão para recrutar
         recruitButton.click();
     } else {
         console.log(`Não há unidades suficientes para recrutar ${unitType}.`);
     }
 }
 
-
-// Função para recrutar Exploradores
-function recruitScouts() {
-    recruitTroops(
-        'Exploradores',          // Tipo de unidade (para mensagens de log)
-        'dailyScout',            // Chave da meta diária no config
-        'totalScout',            // Chave da meta geral no config
-        10,                      // Valor mínimo para recrutar (10 exploradores por vez)
-        'input[name="spy"]',     // Seletor do campo de entrada
-        '#spy_0_a',              // Seletor do link que mostra o máximo
-        'input.btn.btn-recruit'  // Seletor do botão de recrutamento
-    );
-}
-
-
-// Função para recrutar Cavalaria Leve
-function recruitLightCavalry() {
-    recruitTroops(
-        'Cavalaria Leve',          // Tipo de unidade (para mensagens de log)
-        'dailyLight',              // Chave da meta diária no config
-        'totalLight',              // Chave da meta geral no config
-        5,                         // Valor mínimo para recrutar (5 cavalarias leves por vez)
-        'input[name="light"]',     // Seletor do campo de entrada
-        '#light_0_a',              // Seletor do link que mostra o máximo
-        'input.btn.btn-recruit'    // Seletor do botão de recrutamento
-    );
-}
-
-
-// Função para recrutar Lanceiros
+// Atualizando as chamadas das funções específicas com o ID correto
 function recruitSpearmen() {
-    recruitTroops(
-        'Lanceiros',               // Tipo de unidade (para mensagens de log)
-        'dailySpear',              // Chave da meta diária no config
-        'totalSpear',              // Chave da meta geral no config
-        20,                        // Valor mínimo para recrutar (20 lanceiros por vez)
-        'input[name="spear"]',     // Seletor do campo de entrada
-        '#spear_0_a',              // Seletor do link que mostra o máximo
-        'input.btn.btn-recruit'    // Seletor do botão de recrutamento
-    );
+    recruitTroops('Lanceiros', 'dailySpear', 'totalSpear', 20, 'spear_0');
 }
 
-
-// Função para recrutar Espadachins
 function recruitSwordsmen() {
-    recruitTroops(
-        'Espadachins', // Tipo de unidade (para mensagens de log)
-        'dailySword',              // Chave da meta diária no config
-        'totalSword',              // Chave da meta geral no config
-        20,                        // Valor mínimo para recrutar (20 espadachins por vez)
-        'input[name="sword"]',     // Seletor do campo de entrada
-        '#sword_0_a',              // Seletor do link que mostra o máximo
-        'input.btn.btn-recruit'    // Seletor do botão de recrutamento
-    );
+    recruitTroops('Espadachins', 'dailySword', 'totalSword', 20, 'sword_0');
 }
 
+function recruitLightCavalry() {
+    recruitTroops('Cavalaria Leve', 'dailyLight', 'totalLight', 5, 'light_0');
+}
 
-// Automação periódica
+function recruitScouts() {
+    recruitTroops('Exploradores', 'dailyScout', 'totalScout', 10, 'spy_0');
+}
+
+// Automação periódica corrigida
 function startRecruitmentAutomation() {
     setInterval(() => {
-        recruitLightCavalry(); // Recrutamento de Cavalaria Leve
-        recruitSpearmen();     // Recrutamento de Lanceiros
-        recruitSwordsmen();    // Recrutamento de Espadachins
-        recruitScouts();       // Recrutamento de Exploradores
-    }, 5000); // Executa a cada 5 segundos
+        recruitSpearmen();
+        recruitSwordsmen();
+        recruitLightCavalry();
+        recruitScouts();
+    }, 5000);
 }
 
-
-
-
-// Inicia a automação de recrutamento
+// Iniciar automação corrigida
 startRecruitmentAutomation();
 
 
