@@ -3795,44 +3795,38 @@ async function executeBuildOrder() {
     hasExecutedBuildOrder = true;
 }
 
-    /**
- * Tenta construir um edifício específico no Tribal Wars.
- * @param {string} id - Identificador do edifício (ex: "barracks", "main").
+/**
+ * Tenta construir um edifício específico.
+ * @param {string} id - Identificador do edifício.
  * @param {number} level - Nível do edifício desejado.
  * @returns {boolean} - Retorna true se a construção foi bem-sucedida.
  */
-
 async function tryToBuild(id, level) {
     const buildingName = getBuildingName(id.charAt(0).toUpperCase() + id.slice(1));
-    console.log(`🔨 Tentando construir: ${buildingName}, Nível: ${level}`);
 
-    // Normaliza o seletor de argila (clay -> stone)
-    let correctedId = id === "clay" ? "stone" : id;
-
-    // Seleciona todos os botões de construção disponíveis para o edifício
-    const buildButtons = Array.from(document.querySelectorAll(`a.btn-build[data-building="${correctedId}"][data-level-next="${level}"]`));
-
-    // Prioriza botões de missões ativas ou utiliza o primeiro botão disponível
-    const buildButton = buildButtons.find(btn => btn.classList.contains('current-quest')) || buildButtons[0];
-
-    if (!buildButton) {
-        console.warn(`❌ Botão de construção para ${buildingName} (Nível ${level}) não encontrado.`);
+    // Verifica se o edifício já está completo
+    const buildingStatus = document.querySelector(`.building-row[data-building="${id}"]`);
+    if (buildingStatus && buildingStatus.innerText.includes("Edifício totalmente construído")) {
+        console.log(`${buildingName} já está totalmente construído.`);
         return false;
     }
 
-    // Simula o clique no botão de construção
-    try {
+    // Corrige o seletor para argila, pois usa "stone" no DOM
+    let dataBuildingSelector = id === "clay" ? "stone" : id;
+    const buildButton = document.querySelector(`a.btn-build[data-building="${dataBuildingSelector}"][data-level-next="${level}"]`);
+
+    // Se encontrar o botão, tenta construir
+    if (buildButton) {
+        console.log(`Construindo: ${buildingName}, Nível: ${level}`);
         buildButton.click();
-        console.log(`✅ Clique efetuado para construir ${buildingName}, Nível: ${level}`);
-        await wait(2000); // Aguarda o clique ser processado
+        await wait(2000); // Espera 2 segundos para o clique ser processado
+        await checkAndClickFinish();
         return true;
-    } catch (error) {
-        console.error(`❌ Erro ao tentar clicar em ${buildingName}:`, error);
+    } else {
+        console.warn(`Não foi possível construir ${buildingName} (Nível ${level}).`);
         return false;
     }
 }
-
-
 
 // Evento para iniciar a automação ao carregar a página
 window.addEventListener('load', () => {
