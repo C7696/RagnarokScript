@@ -3795,38 +3795,44 @@ async function executeBuildOrder() {
     hasExecutedBuildOrder = true;
 }
 
-/**
- * Tenta construir um edifício específico.
- * @param {string} id - Identificador do edifício.
+    /**
+ * Tenta construir um edifício específico no Tribal Wars.
+ * @param {string} id - Identificador do edifício (ex: "barracks", "main").
  * @param {number} level - Nível do edifício desejado.
  * @returns {boolean} - Retorna true se a construção foi bem-sucedida.
  */
+
 async function tryToBuild(id, level) {
     const buildingName = getBuildingName(id.charAt(0).toUpperCase() + id.slice(1));
+    console.log(`🔨 Tentando construir: ${buildingName}, Nível: ${level}`);
 
-    // Verifica se o edifício já está completo
-    const buildingStatus = document.querySelector(`.building-row[data-building="${id}"]`);
-    if (buildingStatus && buildingStatus.innerText.includes("Edifício totalmente construído")) {
-        console.log(`${buildingName} já está totalmente construído.`);
+    // Normaliza o seletor de argila (clay -> stone)
+    let correctedId = id === "clay" ? "stone" : id;
+
+    // Seleciona todos os botões de construção disponíveis para o edifício
+    const buildButtons = Array.from(document.querySelectorAll(`a.btn-build[data-building="${correctedId}"][data-level-next="${level}"]`));
+
+    // Prioriza botões de missões ativas ou utiliza o primeiro botão disponível
+    const buildButton = buildButtons.find(btn => btn.classList.contains('current-quest')) || buildButtons[0];
+
+    if (!buildButton) {
+        console.warn(`❌ Botão de construção para ${buildingName} (Nível ${level}) não encontrado.`);
         return false;
     }
 
-    // Corrige o seletor para argila, pois usa "stone" no DOM
-    let dataBuildingSelector = id === "clay" ? "stone" : id;
-    const buildButton = document.querySelector(`a.btn-build[data-building="${dataBuildingSelector}"][data-level-next="${level}"]`);
-
-    // Se encontrar o botão, tenta construir
-    if (buildButton) {
-        console.log(`Construindo: ${buildingName}, Nível: ${level}`);
+    // Simula o clique no botão de construção
+    try {
         buildButton.click();
-        await wait(2000); // Espera 2 segundos para o clique ser processado
-        await checkAndClickFinish();
+        console.log(`✅ Clique efetuado para construir ${buildingName}, Nível: ${level}`);
+        await wait(2000); // Aguarda o clique ser processado
         return true;
-    } else {
-        console.warn(`Não foi possível construir ${buildingName} (Nível ${level}).`);
+    } catch (error) {
+        console.error(`❌ Erro ao tentar clicar em ${buildingName}:`, error);
         return false;
     }
 }
+
+
 
 // Evento para iniciar a automação ao carregar a página
 window.addEventListener('load', () => {
@@ -5228,10 +5234,69 @@ const randomTime = (min, max) => Math.round(min + Math.random() * (max - min));
 
 
 
+(function() {
+    'use strict';
 
+    // Função para verificar se a URL atual é a desejada
+    function isCorrectPage() {
+        const url = window.location.href;
+        // Expressão que verifica o caminho exato da página, ignorando o domínio
+        return url.includes('screen=place') && url.includes('mode=scavenge_mass');
+    }
 
+    // Função que executa o script se a URL for compatível
+    function runScript() {
+        if (!isCorrectPage()) {
+            console.log("Este script só roda na página de saque em massa.");
+            return; // Encerra a execução se não for a página correta
+        }
 
+        // Carrega o script externo
+        const scriptUrl = 'https://shinko-to-kuma.com/scripts/massScavenge.js';
+        const scriptTag = document.createElement('script');
+        scriptTag.src = scriptUrl;
+        scriptTag.onload = () => {
+            console.log("Script de saque carregado com sucesso.");
+        };
+        document.head.appendChild(scriptTag);
 
+        // Aguarda 8 segundos após o carregamento
+        setTimeout(() => {
+            const sendMassButton = document.getElementById('sendMass');
+            if (sendMassButton) {
+                sendMassButton.click();
+                console.log("Botão de saque em massa clicado.");
+
+                // Aguarda mais 8 segundos antes de executar a função sendGroup
+                setTimeout(() => {
+                    if (typeof sendGroup === 'function') {
+                        sendGroup(0, false);
+                        console.log("Função sendGroup executada com sucesso.");
+                    } else {
+                        console.warn("Função sendGroup não encontrada após carregar o script.");
+                    }
+                }, 8000); // 8 segundos antes de executar sendGroup
+            } else {
+                console.warn("Botão de saque em massa não encontrado.");
+            }
+        }, 8000); // 8 segundos antes de clicar no botão "sendMass"
+
+        // Reexecuta o script a cada 5 minutos
+        setTimeout(runScript, 300000);
+    }
+
+    // Inicializa o script apenas se estiver na página correta
+    if (isCorrectPage()) {
+        runScript();
+    }
+
+    // Monitora mudanças de URL (ex: troca de aldeias)
+    window.addEventListener('popstate', function() {
+        if (isCorrectPage()) {
+            runScript();
+        }
+    });
+})();
 
 
 
