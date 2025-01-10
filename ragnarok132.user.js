@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ragnarok Script - 132
 // @namespace    http://tampermonkey.net/
-// @version      4.0
+// @version      4.1
 // @description  Script completo para Tribal Wars: Verificação de licença, gerenciamento de recrutamento e fila de construção fluida com atualizações automáticas.
 // @author       Você
 // @icon         https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRqZkx9l1oFSMXaHyoydMSRhtkyQjfvjovCIw&s
