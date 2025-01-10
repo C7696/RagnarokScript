@@ -183,7 +183,7 @@ function iniciarParticulas() {
  */
 async function verificarLicenca() {
     try {
-        const agora = Math.floor(Date.now() / 1000); // Tempo atual em segundos
+        const agora = Date.now(); // Milissegundos
         const response = await fetch(urlPlanilha);
         if (!response.ok) throw new Error("❌ Erro ao acessar a planilha de licenças.");
 
@@ -192,35 +192,33 @@ async function verificarLicenca() {
 
         for (let i = 1; i < linhas.length; i++) {
             const [username, chave, tempoExpiracao] = linhas[i];
-            const expiraEm = parseInt(tempoExpiracao, 10);  // Assumindo que os valores estão em segundos
+            const expiraEmTimestamp = Date.parse(tempoExpiracao); // Interpretação ISO 8601
 
             if (username === jogadorAutorizado && chave === licenseKey) {
-
-                // 🚀 Limpeza de histórico quando expira ou nova chave detectada
-                if (expiraEm <= agora) {
-                    localStorage.clear();  // Limpa todo o cache ao expirar
+                if (expiraEmTimestamp <= agora) {
+                    localStorage.clear();
                     bloquearScript("⚠️ Sua licença expirou. Faça login novamente.");
                     return false;
                 }
 
-                // ✅ Licença válida - Limpar cache e reiniciar
-                localStorage.setItem("expiraEm", expiraEm.toString());
+                // ✅ Licença válida
+                localStorage.setItem("expiraEm", expiraEmTimestamp.toString());
                 localStorage.setItem("username", username);
                 localStorage.setItem("licenseKey", chave);
 
-                const tempoRestante = formatarTempo(expiraEm - agora);
+                const tempoRestante = formatarTempo((expiraEmTimestamp - agora) / 1000);
                 console.log(`✅ Licença válida! Expira em: ${tempoRestante}`);
                 await atualizarStatusPlanilha("Online", tempoRestante);
                 return true;
             }
         }
 
-        // Se nenhuma licença for encontrada
+        // Falha na validação
         localStorage.clear();
         bloquearScript("⚠️ Licença inválida ou não encontrada.");
         return false;
     } catch (error) {
-        localStorage.clear();  // Limpa em caso de erro também
+        localStorage.clear();
         bloquearScript(`❌ Erro ao validar a licença: ${error.message}`);
         return false;
     }
@@ -369,6 +367,13 @@ function iniciarParticulasErro() {
     animarParticulasErro();
 }
 })();
+
+
+
+
+
+
+
 
 
 
@@ -4587,16 +4592,49 @@ document.body.addEventListener('click', (event) => {
     });
 
 
-    // Configura o evento de duplo clique direito
+// Configura o evento para desktop e mobile
 let rightClickCount = 0;
-document.addEventListener('contextmenu', (event) => { // Use 'contextmenu' para clique direito
-    event.preventDefault(); // Impede o menu de contexto padrão do navegador
-    rightClickCount++;
-    setTimeout(() => rightClickCount = 0, 500); // Reset após 500ms
-    if (rightClickCount === 2) {
-        showFunctionSelector();
-    }
-});
+let touchTimer;
+let isTouchDevice = 'ontouchstart' in window; // Detecta se é dispositivo móvel
+
+// **Para Desktop: Clique Duplo com Botão Direito**
+if (!isTouchDevice) {
+    document.addEventListener('contextmenu', (event) => {
+        event.preventDefault(); // Bloqueia o menu padrão
+        rightClickCount++;
+        setTimeout(() => rightClickCount = 0, 500); // Reseta após 500ms
+        if (rightClickCount === 2) {
+            showFunctionSelector(); // Executa a ação
+        }
+    });
+}
+
+// **Para Mobile: Toque e Segure**
+else {
+    document.addEventListener('touchstart', (event) => {
+        touchTimer = setTimeout(() => {
+            showFunctionSelector(); // Executa após toque longo
+        }, 700); // Tempo de 700ms para toque longo
+    });
+
+    // Cancela o toque longo se o dedo for levantado ou movido
+    document.addEventListener('touchend', () => clearTimeout(touchTimer));
+    document.addEventListener('touchmove', () => clearTimeout(touchTimer));
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
