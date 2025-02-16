@@ -1,23 +1,16 @@
 // ==UserScript==
-// @name         Ragnarok Script - 132
+// @name         Ragnarok Script - en145
 // @namespace    http://tampermonkey.net/
-// @version      4.3
+// @version      4.0
 // @description  Script completo para Tribal Wars: Verificação de licença, gerenciamento de recrutamento e fila de construção fluida com atualizações automáticas.
 // @author       Você
 // @icon         https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRqZkx9l1oFSMXaHyoydMSRhtkyQjfvjovCIw&s
-// @match        https://br132.tribalwars.com.br/*
+// @match        https://en145.tribalwars.net/game.php*
 // @grant        none
 // @require      https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js
 // @updateURL    https://raw.githubusercontent.com/C7696/RagnarokScript/main/Ragnarok.132
 // @downloadURL  https://raw.githubusercontent.com/C7696/RagnarokScript/main/Ragnarok.132
 // ==/UserScript==
-
-
-
-
-
-
-
 
 
 
@@ -339,7 +332,7 @@ window.addEventListener('load', performAutoLogin);
     // Redireciona para uma URL específica
     function redirectTo(screen) {
         const villageId = new URLSearchParams(window.location.search).get('village');
-        const url = `https://br132.tribalwars.com.br/game.php?village=${villageId}&${screen}`;
+        const url = `https://en145.tribalwars.net/game.php?village=${villageId}&${screen}`;
         const randomTime = Math.floor(Math.random() * 11 + 10) * 1000; // 10 a 20 segundos
         setTimeout(() => window.location.href = url, randomTime);
     }
@@ -3373,7 +3366,8 @@ let hasExecutedBuildOrder = false;
 
 // Função principal para executar a lógica de construção automática
 async function executeBuildOrder() {
-    const villagePagePattern = /https:\/\/br132\.tribalwars\.com\.br\/game\.php\?village=\d+&screen=main/;
+    const villagePagePattern = /https:\/\/en145\.tribalwars\.net\/game\.php\?village=\d+&screen=main/;
+
 
     if (!villagePagePattern.test(window.location.href) || !isBuildAutomationActive || hasExecutedBuildOrder) {
         return; // Não executa se a URL não for a correta ou a automação não estiver ativada
@@ -3488,7 +3482,7 @@ async function tryToBuild(id, level) {
 
 // Evento para iniciar a automação ao carregar a página
 window.addEventListener('load', () => {
-    const villagePagePattern = /https:\/\/br132\.tribalwars\.com\.br\/game\.php\?village=\d+&screen=main/;
+   const villagePagePattern = /https:\/\/en145\.tribalwars\.net\/game\.php\?village=\d+&screen=main/;
     if (villagePagePattern.test(window.location.href) && isBuildAutomationActive) {
         console.log("Automação ativada e executando...");
         executeBuildOrder();
