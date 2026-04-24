@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tribal Wars - Smart Automation
 // @namespace    http://tampermonkey.net/
-// @version      7.0
-// @description  Motor de precisão com memória, anti-loop e cooldown por aldeia
+// @version      8.0
+// @description  Gerenciador multi-village com perfis, score de urgência e priorização global
 // @author       You
 // @match        *://*.tribalwars.com.br/*
 // @match        *://*.divoke-kmene.sk/*
@@ -145,7 +145,8 @@
             currentMilestone: 'village_current_milestone_',
             consecutiveFails: 'village_consecutive_fails_',
             blockedTargets: 'village_blocked_targets_',
-            actionLock: 'village_action_lock_'
+            actionLock: 'village_action_lock_',
+            villageProfile: 'village_profile_'
         },
         
         // Duração dos cooldowns em ms
@@ -154,6 +155,14 @@
             TARGET_BLOCK: 600000,    // 10 minutos para targets problemáticos
             ACTION_LOCK: 3000,       // 3 segundos entre ações
             SOFT_RESET: 1800000      // 30 minutos para reset suave
+        },
+        
+        // Perfis de aldeia
+        PROFILES: {
+            ECONOMIC: 'economic',    // Foco em recursos e storage
+            MILITARY: 'military',    // Foco em tropas e ofensiva
+            SUPPORT: 'support',      // Foco em defesa e suporte
+            BALANCED: 'balanced'     // Equilibrado
         },
         
         // Obter memória completa de uma aldeia
@@ -167,8 +176,33 @@
                 currentMilestone: GM_getValue(this.KEYS.currentMilestone + villageId, null),
                 consecutiveFails: GM_getValue(this.KEYS.consecutiveFails + villageId, 0),
                 blockedTargets: GM_getValue(this.KEYS.blockedTargets + villageId, {}),
-                actionLock: GM_getValue(this.KEYS.actionLock + villageId, false)
+                actionLock: GM_getValue(this.KEYS.actionLock + villageId, false),
+                profile: GM_getValue(this.KEYS.villageProfile + villageId, this.PROFILES.BALANCED)
             };
+        },
+        
+        // Definir perfil da aldeia
+        setProfile: function(villageId, profile) {
+            if (this.PROFILES[profile.toUpperCase()]) {
+                this.set(villageId, 'villageProfile', this.PROFILES[profile.toUpperCase()]);
+                log('[memória] Perfil definido: ' + profile, 'info');
+            }
+        },
+        
+        // Obter pesos estratégicos baseados no perfil da aldeia
+        getStrategyWeights: function(villageId) {
+            var mem = this.get(villageId);
+            var profile = mem.profile || this.PROFILES.BALANCED;
+            
+            // Pesos por tipo de edifício para cada perfil
+            var weights = {
+                economic:  { wood: 1.5, stone: 1.5, iron: 1.4, storage: 1.3, farm: 1.2, main: 1.1, barracks: 0.6, stable: 0.5, smith: 0.7, wall: 0.5, place: 0.4, hide: 0.3, church: 0.3, statue: 0.8, market: 1.2, garage: 0.3, snob: 0.4 },
+                military:  { wood: 0.8, stone: 0.8, iron: 1.3, storage: 0.9, farm: 1.4, main: 1.0, barracks: 1.5, stable: 1.4, smith: 1.3, wall: 1.1, place: 0.6, hide: 0.4, church: 0.3, statue: 1.0, market: 0.5, garage: 0.8, snob: 0.6 },
+                support:   { wood: 0.9, stone: 0.9, iron: 1.0, storage: 1.0, farm: 1.1, main: 1.0, barracks: 0.8, stable: 0.7, smith: 0.9, wall: 1.5, place: 0.5, hide: 0.6, church: 1.2, statue: 1.1, market: 0.7, garage: 0.5, snob: 0.3 },
+                balanced:  { wood: 1.2, stone: 1.2, iron: 1.1, storage: 1.0, farm: 1.2, main: 1.3, barracks: 1.0, stable: 0.9, smith: 1.0, wall: 0.9, place: 0.5, hide: 0.4, church: 0.5, statue: 0.9, market: 0.7, garage: 0.6, snob: 0.5 }
+            };
+            
+            return weights[profile] || weights.balanced;
         },
         
         // Atualizar campo específico
@@ -1325,9 +1359,9 @@ function motorDeDecisaoMacro(state, villageId) {
             visHUD.motivo = 'Falhas consecutivas detectadas';
         }
         
-        // Carregar perfil do jogador (padrão: balanced)
-        var playerProfile = GM_getValue('player_profile_' + state.villageId, 'balanced');
-        var profile = PLAYER_PROFILES[playerProfile] || PLAYER_PROFILES.balanced;
+        // Obter pesos estratégicos baseados no perfil da aldeia (substitui profile do jogador)
+        var profileWeights = VillageMemory.getStrategyWeights(villageId);
+        log('[motorDeDecisao] Perfil da aldeia: ' + memory.profile, 'info');
 
         // 1. RUSH GRÁTIS (Sempre primeiro)
         if (state.rushIds.length > 0) {
@@ -1544,15 +1578,9 @@ function motorDeDecisaoMacro(state, villageId) {
                         // Retorno por recurso (edifícios de recurso têm retorno contínuo)
                         var retornoRecurso = ['wood', 'stone', 'iron', 'farm'].includes(ed) ? 1.5 : 1.0;
                         
-                        // Peso estratégico baseado na fase e perfil do jogador
+                        // Peso estratégico baseado na fase e perfil da aldeia
                         var pesoBase = STRATEGIC_WEIGHT[state.phase][ed] || 1.0;
-                        var ajustePerfil = 1.0;
-                        
-                        // Ajustar pelo perfil do jogador
-                        if (['wood', 'stone', 'iron'].includes(ed)) ajustePerfil = profile.resource;
-                        else if (['barracks', 'stable', 'garage', 'smith'].includes(ed)) ajustePerfil = profile.military;
-                        else if (['wall', 'hide', 'church', 'watchtower'].includes(ed)) ajustePerfil = profile.defense;
-                        else if (['main', 'market', 'snob'].includes(ed)) ajustePerfil = profile.expansion;
+                        var ajustePerfil = profileWeights[ed] || 1.0;
                         
                         // Tempo até resolver gargalo atual (agora usa sistema de níveis de alerta)
                         var urgenciaGargalo = 1.0;
@@ -1632,12 +1660,7 @@ function motorDeDecisaoMacro(state, villageId) {
                         var nivelAtual = parseInt(state.niveis[ed] || 0);
                         var custoNormalizado = ((custo[0] + custo[1] + custo[2]) * Math.pow(1.5, nivelAtual)) / 100;
                         var pesoBase = STRATEGIC_WEIGHT[state.phase][ed] || 1.0;
-                        var ajustePerfil = 1.0;
-
-                        if (['wood', 'stone', 'iron'].includes(ed)) ajustePerfil = profile.resource;
-                        else if (['barracks', 'stable', 'garage', 'smith'].includes(ed)) ajustePerfil = profile.military;
-                        else if (['wall', 'hide', 'church', 'watchtower'].includes(ed)) ajustePerfil = profile.defense;
-                        else if (['main', 'market', 'snob'].includes(ed)) ajustePerfil = profile.expansion;
+                        var ajustePerfil = profileWeights[ed] || 1.0;
 
                         // Bônus do HQ como acelerador de throughput global
                         var bonusHQProdutoividade = 1.0;
@@ -2013,6 +2036,197 @@ function motorDeDecisaoMacro(state, villageId) {
             });
     }
     // ============================================================
+    // SISTEMA DE GERENCIAMENTO MULTI-VILLAGE
+    // ============================================================
+    var VillageManager = {
+        villages: [],
+        currentVillageIndex: 0,
+        lastCheckAll: 0,
+        
+        // Obter todas as aldeias do jogador
+        getAllVillages: function() {
+            try {
+                if (typeof game_data === 'undefined' || !game_data.player) {
+                    return [];
+                }
+                
+                var villages = [];
+                for (var id in game_data.player.villages) {
+                    var v = game_data.player.villages[id];
+                    villages.push({
+                        id: String(v.id),
+                        name: v.name,
+                        x: v.x,
+                        y: v.y,
+                        points: parseInt(v.points) || 0,
+                        isMain: v.is_main || false
+                    });
+                }
+                return villages;
+            } catch (e) {
+                log('[VillageManager] Erro ao obter aldeias: ' + e.message, 'error');
+                return [];
+            }
+        },
+        
+        // Calcular score de urgência para uma aldeia
+        calculateUrgencyScore: function(villageId, state) {
+            if (!state) return 50; // Score padrão se não houver estado
+            
+            var score = 50;
+            var mem = VillageMemory.get(villageId);
+            
+            // Fatores que aumentam urgência:
+            
+            // 1. População crítica (>90% = +30 pontos)
+            var popRatio = state.populacao.current / (state.populacao.max || 1);
+            if (popRatio > 0.95) score += 40;
+            else if (popRatio > 0.90) score += 30;
+            else if (popRatio > 0.85) score += 20;
+            else if (popRatio > 0.80) score += 10;
+            
+            // 2. Armazém cheio (>90% = +25 pontos)
+            var resRatio = Math.max(
+                state.recursos.wood / state.recursos.max,
+                state.recursos.stone / state.recursos.max,
+                state.recursos.iron / state.recursos.max
+            );
+            if (resRatio > 0.95) score += 35;
+            else if (resRatio > 0.90) score += 25;
+            else if (resRatio > 0.85) score += 15;
+            
+            // 3. Fila de construção vazia (pode construir = +15 pontos)
+            if (state.filaBuilds === 0 && state.premium.ativo) score += 15;
+            else if (state.filaBuilds < 2) score += 10;
+            
+            // 4. Rush disponível (+20 pontos)
+            if (state.rushIds.length > 0) score += 20;
+            if (state.knightRushId) score += 15;
+            
+            // 5. Bandeira não atribuída (+10 pontos)
+            if (!state.flagAssigned) score += 10;
+            
+            // 6. Paladino disponível para recrutamento (+15 pontos)
+            if (state.knight.canRecruit && !state.knight.isRecruiting) score += 15;
+            
+            // Fatores que diminuem urgência:
+            
+            // 7. Em cooldown (-30 pontos)
+            if (mem.cooldownUntil && Date.now() < mem.cooldownUntil) score -= 30;
+            
+            // 8. Muitas falhas consecutivas (-20 pontos)
+            if (mem.consecutiveFails >= 3) score -= 20;
+            else if (mem.consecutiveFails >= 2) score -= 10;
+            
+            // 9. Ação em progresso (-25 pontos)
+            if (mem.actionLock) score -= 25;
+            
+            // 10. Perfil econômico com recursos baixos (prioridade extra)
+            if (mem.profile === VillageMemory.PROFILES.ECONOMIC && resRatio < 0.5) {
+                score += 15;
+            }
+            
+            // 11. Perfil militar com fila vazia (prioridade extra)
+            if (mem.profile === VillageMemory.PROFILES.MILITARY && state.filaBuilds === 0) {
+                score += 10;
+            }
+            
+            return Math.max(0, Math.min(100, score));
+        },
+        
+        // Classificar aldeias por urgência
+        rankVillages: function() {
+            var self = this;
+            var ranked = [];
+            
+            this.villages.forEach(function(v) {
+                // Tentar obter estado salvo ou calcular score básico
+                var mem = VillageMemory.get(v.id);
+                var lastState = GM_getValue('village_last_state_' + v.id, null);
+                var score = self.calculateUrgencyScore(v.id, lastState);
+                
+                ranked.push({
+                    village: v,
+                    score: score,
+                    profile: mem.profile,
+                    lastSuccess: mem.lastSuccess,
+                    inCooldown: mem.cooldownUntil && Date.now() < mem.cooldownUntil,
+                    actionLock: mem.actionLock
+                });
+            });
+            
+            // Ordenar por score (maior urgência primeiro)
+            ranked.sort(function(a, b) { return b.score - a.score; });
+            
+            return ranked;
+        },
+        
+        // Obter próxima aldeia para processamento
+        getNextVillage: function() {
+            var ranked = this.rankVillages();
+            if (ranked.length === 0) return null;
+            
+            // Retorna a aldeia com maior urgência
+            return ranked[0].village;
+        },
+        
+        // Atualizar lista de aldeias
+        refreshVillages: function() {
+            this.villages = this.getAllVillages();
+            log('[VillageManager] ' + this.villages.length + ' aldeias encontradas', 'info');
+            
+            // Inicializar perfil para aldeias novas
+            var self = this;
+            this.villages.forEach(function(v) {
+                var mem = VillageMemory.get(v.id);
+                if (!mem.profile || mem.profile === VillageMemory.PROFILES.BALANCED) {
+                    // Auto-detectar perfil baseado na configuração de edifícios
+                    var levels = GM_getValue('village_levels_' + v.id, {});
+                    var detectedProfile = self.autoDetectProfile(levels);
+                    if (detectedProfile !== VillageMemory.PROFILES.BALANCED) {
+                        VillageMemory.setProfile(v.id, detectedProfile);
+                    }
+                }
+            });
+            
+            return this.villages;
+        },
+        
+        // Auto-detectar perfil da aldeia baseado nos níveis de edifícios
+        autoDetectProfile: function(levels) {
+            if (!levels) return VillageMemory.PROFILES.BALANCED;
+            
+            var militaryScore = (parseInt(levels.barracks) || 0) + (parseInt(levels.stable) || 0) * 1.2 + (parseInt(levels.smith) || 0);
+            var economicScore = (parseInt(levels.wood) || 0) + (parseInt(levels.stone) || 0) + (parseInt(levels.iron) || 0) * 1.1 + (parseInt(levels.storage) || 0);
+            var defenseScore = (parseInt(levels.wall) || 0) + (parseInt(levels.hide) || 0) + (parseInt(levels.church) || 0);
+            
+            if (militaryScore > economicScore * 1.3 && militaryScore > defenseScore * 1.2) {
+                return VillageMemory.PROFILES.MILITARY;
+            } else if (economicScore > militaryScore * 1.5 && economicScore > defenseScore * 1.3) {
+                return VillageMemory.PROFILES.ECONOMIC;
+            } else if (defenseScore > militaryScore * 1.2 && defenseScore > economicScore * 1.1) {
+                return VillageMemory.PROFILES.SUPPORT;
+            }
+            
+            return VillageMemory.PROFILES.BALANCED;
+        },
+        
+        // Salvar estado da aldeia para ranking futuro
+        saveVillageState: function(villageId, state) {
+            GM_setValue('village_last_state_' + villageId, state);
+        },
+        
+        // Mostrar status do gerenciamento multi-village
+        getStatus: function() {
+            var ranked = this.rankVillages();
+            var status = ranked.map(function(r, i) {
+                return (i+1) + '. ' + r.village.name + ' (score: ' + r.score + ', perfil: ' + r.profile + ')';
+            });
+            return status.join('\n');
+        }
+    };
+
+    // ============================================================
     // INIT
     // ============================================================
     function init() {
@@ -2021,12 +2235,21 @@ function motorDeDecisaoMacro(state, villageId) {
             log('[init] Executando em iframe bot — skip auto actions');
             return;
         }
-        log('TW Smart Automation v5.0 iniciado.');
+        log('TW Smart Automation v8.0 - Multi-Village Manager iniciado.');
+        
+        // Refresh inicial das aldeias
+        VillageManager.refreshVillages();
+        
         var villageId = getCurrentVillageId();
         var screen = getScreenParam();
 
         // Background checklist roda em QUALQUER tela
         if (villageId) {
+            // Salvar estado inicial para ranking
+            collectVillageState(villageId).then(function(state) {
+                VillageManager.saveVillageState(villageId, state);
+            });
+            
             setTimeout(function () { runChecklist(villageId); }, CONFIG.checklistDelay);
         } else {
             // Sem village ID: mostra HUD vazio aguardando
@@ -2055,6 +2278,23 @@ function motorDeDecisaoMacro(state, villageId) {
         setTimeout(init, 800);
     }
 
-    window.TWBot = { config: CONFIG, hud: HUD };
+    window.TWBot = { 
+        config: CONFIG, 
+        hud: HUD,
+        villageManager: VillageManager,
+        memory: VillageMemory,
+        // API para definir perfil manualmente por aldeia
+        setVillageProfile: function(villageId, profile) {
+            VillageMemory.setProfile(villageId, profile);
+        },
+        // API para obter ranking de urgência
+        getUrgencyRanking: function() {
+            return VillageManager.rankVillages();
+        },
+        // API para forçar refresh das aldeias
+        refreshVillages: function() {
+            return VillageManager.refreshVillages();
+        }
+    };
 
 })();
