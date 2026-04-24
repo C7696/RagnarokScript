@@ -2469,13 +2469,14 @@ function motorDeDecisaoMacro(state, villageId) {
     }
 
     // Função bgBuildGeneric atualizada para ser assíncrona (usada como fallback em segundo plano)
+    // Esta função NÃO depende de verificação de botão no DOM - envia POST direto
     async function bgBuildGeneric(villageId, building, csrf) {
         var origin = window.location.origin;
         // URL correta para upgrade de edifícios no Tribal Wars (type=main é obrigatório)
         var buildUrl = origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=upgrade_building&type=main';
         var body = 'id=' + building + '&force=1&destroy=0&source=' + villageId + '&h=' + csrf;
 
-        log('[builder] Solicitando upgrade de ' + building + '...', 'info');
+        log('[builder] Solicitando upgrade de ' + building + ' via POST direto...', 'info');
         
         try {
             var resp = await twFetch(buildUrl, 'POST', body);
@@ -2489,7 +2490,13 @@ function motorDeDecisaoMacro(state, villageId) {
             } else {
                 log('[builder] Falha ao confirmar ' + building + ' na fila', 'error');
                 // Log da resposta completa para debug
-                log('[builder] Resposta recebida: ' + resp.substring(0, 200), 'warning');
+                log('[builder] Resposta recebida: ' + resp.substring(0, 300), 'warning');
+                
+                // Tentativa de fallback: verificar se há erro de recursos insuficientes
+                if (resp.indexOf('not enough resources') !== -1 || resp.indexOf('recursos insuficientes') !== -1 || 
+                    resp.indexOf('Nicht genügend Ressourcen') !== -1) {
+                    log('[builder] Recursos insuficientes para ' + building, 'warn');
+                }
                 return false;
             }
         } catch(err) {
@@ -2703,17 +2710,17 @@ function motorDeDecisaoMacro(state, villageId) {
                             log('[executor] Target ' + task.target + ' está bloqueado, pulando', 'warning');
                             p = Promise.resolve(false);
                         }
-                        // NOVA ABORDAGEM: Usa a função bgUpgradeBuilding (AJAX FANTASMA) para construir em segundo plano
-                        // sem depender do DOM ou clicar no botão
+                        // NOVA ABORDAGEM: Usa a função bgBuildGeneric (AJAX DIRETO) para construir em segundo plano
+                        // SEM depender de botão no DOM - envia POST direto ao servidor como capturado do jogo
                         else {
-                            // Chama a função fantasma em vez de procurar o botão no DOM
-                            p = bgUpgradeBuilding(villageId, task.target)
+                            // Chama a função que envia POST direto sem verificar DOM
+                            p = bgBuildGeneric(villageId, task.target, state.csrf)
                                 .then(function(success) {
                                     if (success) {
-                                        log('[executor] ' + task.target + ' iniciado com sucesso!', 'success');
+                                        log('[executor] ' + task.target + ' iniciado com sucesso via POST direto!', 'success');
                                         VillageMemory.recordSuccess(villageId, task.target);
                                     } else {
-                                        log('[executor] Falha ao iniciar ' + task.target + ', registrando erro', 'error');
+                                        log('[executor] Falha ao iniciar ' + task.target + ' via POST direto, registrando erro', 'error');
                                         VillageMemory.recordError(villageId, task.target, 'build_fail');
                                     }
                                     return success;
