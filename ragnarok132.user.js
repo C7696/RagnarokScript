@@ -327,9 +327,25 @@
         isTargetBlocked: function(villageId, target) {
             var mem = this.get(villageId);
             var blocked = mem.blockedTargets || {};
+            
+            // Verificar bloqueio específico do target
             if (blocked[target] && Date.now() < blocked[target]) {
+                log('[memória] Target ' + target + ' está bloqueado até ' + new Date(blocked[target]).toLocaleTimeString(), 'warning');
                 return true;
             }
+            
+            // Verificar bloqueio por recursos insuficientes (novo sistema)
+            var resourceBlockKey = 'resource_blocked_' + target + '_' + villageId;
+            var resourceBlock = GM_getValue(resourceBlockKey, 0);
+            if (resourceBlock && Date.now() < resourceBlock) {
+                log('[memória] Target ' + target + ' bloqueado por falta de recursos até ' + new Date(resourceBlock).toLocaleTimeString(), 'warning');
+                return true;
+            } else if (resourceBlock && Date.now() >= resourceBlock) {
+                // Limpar bloqueio expirado
+                GM_setValue(resourceBlockKey, 0);
+                log('[memória] Bloqueio de recursos para ' + target + ' expirou, liberando...', 'info');
+            }
+            
             // Limpar expired
             for (var t in blocked) {
                 if (Date.now() >= blocked[t]) {
@@ -1796,6 +1812,10 @@ function motorDeDecisaoMacro(state, villageId) {
         
         var visHUD = { fase: state.phase, gargalo: 'OK', meta: 'Calculando...', acao: 'Monitorando', motivo: 'Ativo' };
         
+        log('[motor] === INICIANDO MOTOR DE DECISAO ===', 'info');
+        log('[motor] Fila atual: ' + state.buildQueue.length + '/' + maxFila + ' | Recursos: ' + JSON.stringify(state.resources), 'info');
+        log('[motor] Rush disponiveis: ' + state.rushIds.length + ' | Knight Rush ID: ' + state.knightRushId, 'info');
+        
         // Verificar se deve mudar estratégia por falhas consecutivas
         if (VillageMemory.needsStrategyChange(villageId)) {
             log('[motorDeDecisao] Muitas falhas consecutivas, ajustando estratégia', 'warning');
@@ -1815,6 +1835,7 @@ function motorDeDecisaoMacro(state, villageId) {
             visHUD.acao = "RUSH OBRA"; visHUD.motivo = "Limpando fila.";
             HUD.set('build_general', 'running', 'Finalizando obras');
             HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
+            log('[motor] Retornando tarefas de rush: ' + tasks.length, 'success');
             return Promise.resolve(tasks);
         } else {
             log('[motorDeDecisao] Nenhuma obra elegível para rush no momento', 'info');
@@ -1827,6 +1848,7 @@ function motorDeDecisaoMacro(state, villageId) {
             visHUD.acao = "RUSH PALADINO"; visHUD.motivo = "Finalizando herói!";
             HUD.set('knight', 'running', 'Recrutamento em rush');
             HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
+            log('[motor] Retornando tarefa de knight rush', 'success');
             return Promise.resolve(tasks);
         } else {
             log('[motorDeDecisao] Nenhum paladino elegível para rush no momento', 'info');
@@ -2171,13 +2193,26 @@ function motorDeDecisaoMacro(state, villageId) {
                 }
             }
             if (selectedTarget) {
-                // Verificar se target foi bloqueado por falhas anteriores
+                // Verificar se target foi bloqueado por falhas anteriores ou recursos insuficientes
                 if (VillageMemory.isTargetBlocked(villageId, selectedTarget)) {
-                    log('[motorDeDecisao] Target ' + selectedTarget + ' está bloqueado, buscando alternativa', 'warning');
+                    log('[motorDeDecisao] ⚠️ Target ' + selectedTarget + ' está BLOQUEADO, buscando alternativa', 'warning');
                     visHUD.gargalo = 'BLOQUEADO';
-                    visHUD.motivo = 'Target anterior falhou, evitando repetição';
-                    // Não adicionar este target às tarefas
+                    visHUD.motivo = 'Target anterior falhou ou sem recursos, evitando repetição';
+                    
+                    // Buscar próximo melhor target não bloqueado
+                    var alternativas = scoresGerais.filter(s => s.ed !== selectedTarget && !VillageMemory.isTargetBlocked(villageId, s.ed));
+                    if (alternativas.length > 0) {
+                        selectedTarget = alternativas[0].ed;
+                        log('[motorDeDecisao] ✅ Alternativa encontrada: ' + selectedTarget, 'info');
+                        tasks.push({ id: 'build_general', action: 'DO', target: selectedTarget });
+                        visHUD.acao = selectedTarget.toUpperCase();
+                        HUD.set('build_general', 'running', 'Construindo ' + selectedTarget + ' (alternativa)');
+                    } else {
+                        log('[motorDeDecisao] ❌ Sem alternativas disponíveis, aguardando desbloqueio', 'error');
+                        HUD.set('build_general', 'idle', 'Sem targets disponíveis');
+                    }
                 } else {
+                    log('[motorDeDecisao] 🎯 Target selecionado: ' + selectedTarget + ' (score: ' + (scoresGerais.find(s => s.ed === selectedTarget)?.score || 0).toFixed(2) + ')', 'success');
                     tasks.push({ id: 'build_general', action: 'DO', target: selectedTarget });
                     visHUD.acao = selectedTarget.toUpperCase();
                     HUD.set('build_general', 'running', 'Construindo ' + selectedTarget);
@@ -2476,31 +2511,35 @@ function motorDeDecisaoMacro(state, villageId) {
         var buildUrl = origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=upgrade_building&type=main';
         var body = 'id=' + building + '&force=1&destroy=0&source=' + villageId + '&h=' + csrf;
 
-        log('[builder] Solicitando upgrade de ' + building + ' via POST direto...', 'info');
+        log('[builder] === SOLICITANDO UPGRADE === Edificio: ' + building + ' | URL: ' + buildUrl, 'info');
+        log('[builder] Body da requisição: ' + body, 'info');
         
         try {
             var resp = await twFetch(buildUrl, 'POST', body);
+            log('[builder] Resposta recebida (primeiros 500 chars): ' + resp.substring(0, 500), 'debug');
+            
             // Usar camada de verificação robusta
             var success = verifyQueuedAfterBuild(resp, building);
             if (success) {
-                log('[builder] ' + building + ' confirmado na fila!', 'success');
+                log('[builder] ✅ ' + building + ' confirmado na fila com SUCESSO!', 'success');
                 // Pequeno delay para o servidor processar antes da próxima ação
                 await new Promise(resolve => setTimeout(resolve, 500));
                 return true;
             } else {
-                log('[builder] Falha ao confirmar ' + building + ' na fila', 'error');
-                // Log da resposta completa para debug
-                log('[builder] Resposta recebida: ' + resp.substring(0, 300), 'warning');
+                log('[builder] ❌ Falha ao confirmar ' + building + ' na fila', 'error');
                 
                 // Tentativa de fallback: verificar se há erro de recursos insuficientes
                 if (resp.indexOf('not enough resources') !== -1 || resp.indexOf('recursos insuficientes') !== -1 || 
-                    resp.indexOf('Nicht genügend Ressourcen') !== -1) {
-                    log('[builder] Recursos insuficientes para ' + building, 'warn');
+                    resp.indexOf('Nicht genügend Ressourcen') !== -1 ||
+                    resp.indexOf('Rekursos') !== -1) {
+                    log('[builder] ⚠️ Recursos insuficientes para ' + building, 'warn');
+                    // Marcar como bloqueado temporariamente
+                    GM_setValue('resource_blocked_' + building + '_' + villageId, Date.now() + 60000);
                 }
                 return false;
             }
         } catch(err) {
-            log('[builder] Erro na requisição de ' + building + ': ' + err, 'error');
+            log('[builder] 💥 Erro na requisição de ' + building + ': ' + err, 'error');
             return false;
         }
     }
