@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Ragnarok Script - 131
 // @namespace    http://tampermonkey.net/
-// @version      4.2
-// @description  Script completo para Tribal Wars: Verificação de licença, gerenciamento de recrutamento e fila de construção fluida com atualizações automáticas.
+// @version      4.3
+// @description  Script completo para Tribal Wars: Verificação de licença, gerenciamento de recrutamento e fila de construção fluida com atualizações automáticas. Sistema anti-loop com actionLock, cooldown por falha, persistência de estado por aldeia, contador de falhas consecutivas e bloqueio temporário de targets problemáticos.
 // @author       Você
 // @icon         https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRqZkx9l1oFSMXaHyoydMSRhtkyQjfvjovCIw&s
 // @match        https://br131.tribalwars.com.br/*
@@ -2690,7 +2690,12 @@ function openConstructionOrdersPopup() {
         <div class="popup-footer">
             <button id="start-automatic-build" class="popup-btn btn-green">Ativar Automação</button>
             <button id="save-order" class="popup-btn btn-blue">Salvar Ordem</button>
+            <button id="clear-village-state" class="popup-btn btn-red" style="background: #e67e22;">Limpar Estado</button>
             <button id="close-popup-orders" class="popup-btn btn-red">Fechar</button>
+        </div>
+        <div style="margin-top: 15px; padding: 10px; background: #ecf0f1; border-radius: 8px; font-size: 12px;">
+            <strong>📊 Estado da Aldeia:</strong>
+            <div id="village-state-info" style="margin-top: 5px; color: #34495e;">Carregando...</div>
         </div>
     </div>
 
@@ -2876,13 +2881,25 @@ function openConstructionOrdersPopup() {
 
     // Salva a ordem
     document.getElementById('save-order').addEventListener('click', saveOrder);
+    
+    // Limpa estado da aldeia
+    document.getElementById('clear-village-state').addEventListener('click', () => {
+        if (confirm('Tem certeza que deseja limpar todo o estado persistente desta aldeia? Isso resetará cooldowns, bloqueios e contadores.')) {
+            clearVillageState();
+            alert('Estado da aldeia limpo com sucesso!');
+            // Atualiza display do estado
+            displayVillageStateInfo();
+        }
+    });
 
      // Carrega o estado da automação do localStorage
     isBuildAutomationActive = localStorage.getItem('isBuildAutomationActive') === 'true';
 
     // Adiciona o evento ao botão "Ativar Automação" no pop-up
     document.getElementById('start-automatic-build').addEventListener('click', toggleBuildAutomation);
-
+    
+    // Exibe informações do estado da aldeia
+    displayVillageStateInfo();
 
     // Adiciona eventos de exclusão aos botões
     document.querySelectorAll('.delete-card-btn').forEach(button => {
@@ -2892,6 +2909,32 @@ function openConstructionOrdersPopup() {
             deleteCard(id, level);
         });
     });
+}
+
+/**
+ * Exibe informações do estado da aldeia no popup
+ */
+function displayVillageStateInfo() {
+    const stateInfoDiv = document.getElementById('village-state-info');
+    if (!stateInfoDiv) return;
+    
+    const state = loadVillageState();
+    const now = Date.now();
+    
+    const blockedCount = state.blockedTargets.filter(b => b.until > now).length;
+    const cooldownRemaining = state.cooldownUntil > now ? Math.ceil((state.cooldownUntil - now) / 1000) : 0;
+    
+    stateInfoDiv.innerHTML = `
+        <div><strong>Último target:</strong> ${state.lastTarget ? `${state.lastTarget.id} nível ${state.lastTarget.level}` : 'Nenhum'}</div>
+        <div><strong>Último sucesso:</strong> ${state.lastSuccess ? new Date(state.lastSuccess).toLocaleTimeString() : 'Nunca'}</div>
+        <div><strong>Último erro:</strong> ${state.lastError ? new Date(state.lastError).toLocaleTimeString() : 'Nunca'}</div>
+        <div><strong>Falhas consecutivas:</strong> ${state.consecutiveFailures}</div>
+        <div><strong>Cooldown:</strong> ${cooldownRemaining > 0 ? `${cooldownRemaining}s restantes` : 'Nenhum'}</div>
+        <div><strong>Targets bloqueados:</strong> ${blockedCount}</div>
+        <div><strong>Milestone atual:</strong> ${state.currentMilestone}</div>
+        <div><strong>Action Lock:</strong> ${state.actionLock ? '🔒 ATIVO' : '🔓 inativo'}</div>
+        ${state.previousBottleneck ? `<div><strong>Gargalo anterior:</strong> ${state.previousBottleneck.resource}</div>` : ''}
+    `;
 }
 
 
@@ -3216,6 +3259,309 @@ function wait(ms) {
 // Variável para controlar o estado da automação de construção (agora global)
 let isBuildAutomationActive = false;
 
+// Prefixo para chaves do localStorage
+const LS_PREFIX = 'tw_automation_';
+
+/**
+ * Obtém a chave única para o estado da aldeia
+ * @returns {string} Chave do localStorage para a aldeia atual
+ */
+function getVillageStorageKey() {
+    const villageId = game_data?.village?.id || new URLSearchParams(window.location.search).get('village') || 'unknown';
+    return `${LS_PREFIX}village_${villageId}_state`;
+}
+
+/**
+ * Estrutura padrão do estado da aldeia
+ * @returns {Object} Estado inicial da aldeia
+ */
+function getDefaultVillageState() {
+    return {
+        lastTarget: null,           // Último edifício tentado {id, level}
+        lastSuccess: 0,             // Timestamp do último sucesso
+        lastError: 0,               // Timestamp do último erro
+        cooldownUntil: 0,           // Timestamp até quando esperar (cooldown)
+        consecutiveFailures: 0,     // Contador de falhas consecutivas
+        blockedTargets: [],         // Lista de targets problemáticos [{id, level, until}]
+        previousBottleneck: null,   // Gargalo anterior identificado {resource: 'wood'|'clay'|'iron', amount}
+        currentMilestone: 0,        // Marco atual (índice na ordem de construção)
+        actionLock: false,          // Bloqueio de ação em andamento
+        lastActionTime: 0           // Timestamp da última ação
+    };
+}
+
+/**
+ * Carrega o estado persistente da aldeia atual
+ * @returns {Object} Estado da aldeia
+ */
+function loadVillageState() {
+    try {
+        const key = getVillageStorageKey();
+        const saved = localStorage.getItem(key);
+        if (saved) {
+            const state = JSON.parse(saved);
+            // Merge com valores padrão para garantir todos os campos
+            return { ...getDefaultVillageState(), ...state };
+        }
+    } catch (e) {
+        console.error('Erro ao carregar estado da aldeia:', e);
+    }
+    return getDefaultVillageState();
+}
+
+/**
+ * Salva o estado persistente da aldeia atual
+ * @param {Object} state - Estado a ser salvo
+ */
+function saveVillageState(state) {
+    try {
+        const key = getVillageStorageKey();
+        state.lastUpdated = Date.now();
+        localStorage.setItem(key, JSON.stringify(state));
+    } catch (e) {
+        console.error('Erro ao salvar estado da aldeia:', e);
+    }
+}
+
+/**
+ * Limpa o estado da aldeia (reset completo)
+ */
+function clearVillageState() {
+    try {
+        const key = getVillageStorageKey();
+        localStorage.removeItem(key);
+        console.log(`Estado da aldeia ${game_data?.village?.id || 'desconhecida'} limpo.`);
+    } catch (e) {
+        console.error('Erro ao limpar estado da aldeia:', e);
+    }
+}
+
+/**
+ * Verifica se um target está bloqueado
+ * @param {string} id - ID do edifício
+ * @param {number} level - Nível do edifício
+ * @returns {boolean} True se estiver bloqueado
+ */
+function isTargetBlocked(id, level) {
+    const state = loadVillageState();
+    const now = Date.now();
+    
+    // Filtra blocos expirados
+    state.blockedTargets = state.blockedTargets.filter(block => block.until > now);
+    
+    // Verifica se o target atual está bloqueado
+    const isBlocked = state.blockedTargets.some(
+        block => block.id === id && block.level === level
+    );
+    
+    if (isBlocked) {
+        const block = state.blockedTargets.find(b => b.id === id && b.level === level);
+        const remaining = Math.ceil((block.until - now) / 1000);
+        console.warn(`Target ${id} nível ${level} está bloqueado por mais ${remaining}s`);
+    }
+    
+    saveVillageState(state);
+    return isBlocked;
+}
+
+/**
+ * Bloqueia um target temporariamente
+ * @param {string} id - ID do edifício
+ * @param {number} level - Nível do edifício
+ * @param {number} durationMs - Duração do bloqueio em ms (padrão: 5 minutos)
+ */
+function blockTarget(id, level, durationMs = 300000) {
+    const state = loadVillageState();
+    const now = Date.now();
+    
+    // Remove bloco existente se houver
+    state.blockedTargets = state.blockedTargets.filter(
+        block => !(block.id === id && block.level === level)
+    );
+    
+    // Adiciona novo bloco
+    state.blockedTargets.push({
+        id,
+        level,
+        until: now + durationMs,
+        reason: 'falha_repetida'
+    });
+    
+    state.lastError = now;
+    saveVillageState(state);
+    console.warn(`Target ${id} nível ${level} bloqueado por ${durationMs/1000}s`);
+}
+
+/**
+ * Libera todos os blocos expirados e retorna lista de blocos ativos
+ * @returns {Array} Lista de targets bloqueados
+ */
+function cleanupBlockedTargets() {
+    const state = loadVillageState();
+    const now = Date.now();
+    const previousCount = state.blockedTargets.length;
+    
+    state.blockedTargets = state.blockedTargets.filter(block => block.until > now);
+    
+    if (state.blockedTargets.length !== previousCount) {
+        console.log(`${previousCount - state.blockedTargets.length} bloqueios expirados removidos`);
+    }
+    
+    saveVillageState(state);
+    return state.blockedTargets;
+}
+
+/**
+ * Define cooldown após falha
+ * @param {number} durationMs - Duração do cooldown em ms
+ */
+function setCooldown(durationMs = 60000) {
+    const state = loadVillageState();
+    state.cooldownUntil = Date.now() + durationMs;
+    state.lastError = Date.now();
+    saveVillageState(state);
+    console.log(`Cooldown definido por ${durationMs/1000}s`);
+}
+
+/**
+ * Verifica se está em período de cooldown
+ * @returns {boolean} True se estiver em cooldown
+ */
+function isInCooldown() {
+    const state = loadVillageState();
+    const now = Date.now();
+    
+    if (now < state.cooldownUntil) {
+        const remaining = Math.ceil((state.cooldownUntil - now) / 1000);
+        console.log(`Em cooldown, aguardando ${remaining}s...`);
+        return true;
+    }
+    
+    return false;
+}
+
+/**
+ * Registra sucesso na construção
+ * @param {string} id - ID do edifício construído
+ * @param {number} level - Nível construído
+ */
+function registerSuccess(id, level) {
+    const state = loadVillageState();
+    const now = Date.now();
+    
+    state.lastTarget = { id, level };
+    state.lastSuccess = now;
+    state.lastActionTime = now;
+    state.consecutiveFailures = 0; // Reseta contador de falhas
+    state.actionLock = false; // Libera lock
+    
+    // Atualiza milestone
+    state.currentMilestone++;
+    
+    // Limpa cooldown
+    state.cooldownUntil = 0;
+    
+    saveVillageState(state);
+    console.log(`Sucesso registrado: ${id} nível ${level}. Milestone: ${state.currentMilestone}`);
+}
+
+/**
+ * Registra falha na construção
+ * @param {string} id - ID do edifício
+ * @param {number} level - Nível tentado
+ * @param {string} reason - Motivo da falha
+ */
+function registerFailure(id, level, reason = 'desconhecido') {
+    const state = loadVillageState();
+    const now = Date.now();
+    
+    state.lastTarget = { id, level };
+    state.lastError = now;
+    state.lastActionTime = now;
+    state.consecutiveFailures++;
+    state.actionLock = false; // Libera lock
+    
+    console.warn(`Falha registrada: ${id} nível ${level}. Motivo: ${reason}. Falhas consecutivas: ${state.consecutiveFailures}`);
+    
+    // Ações baseadas no número de falhas consecutivas
+    if (state.consecutiveFailures >= 3) {
+        // Após 3 falhas, bloqueia o target
+        blockTarget(id, level, 300000); // 5 minutos
+        setCooldown(120000); // 2 minutos de cooldown geral
+        console.error(`Múltiplas falhas detectadas. Target bloqueado e cooldown ativado.`);
+    } else if (state.consecutiveFailures >= 2) {
+        // Após 2 falhas, aumenta cooldown
+        setCooldown(60000); // 1 minuto
+    } else {
+        // Primeira falha, cooldown curto
+        setCooldown(30000); // 30 segundos
+    }
+    
+    saveVillageState(state);
+}
+
+/**
+ * Tenta adquirir lock de ação
+ * @returns {boolean} True se conseguiu adquirir o lock
+ */
+function tryAcquireActionLock() {
+    const state = loadVillageState();
+    
+    if (state.actionLock) {
+        console.log('Ação já está em andamento (actionLock ativo)');
+        return false;
+    }
+    
+    state.actionLock = true;
+    state.lastActionTime = Date.now();
+    saveVillageState(state);
+    return true;
+}
+
+/**
+ * Libera o lock de ação
+ */
+function releaseActionLock() {
+    const state = loadVillageState();
+    state.actionLock = false;
+    saveVillageState(state);
+}
+
+/**
+ * Identifica e armazena gargalo de recursos
+ * @param {Object} resources - Recursos atuais {wood, clay, iron}
+ * @param {Object} costs - Custos da construção {wood, clay, iron}
+ */
+function identifyBottleneck(resources, costs) {
+    const state = loadVillageState();
+    
+    const ratios = {
+        wood: resources.madeira / (costs.wood || 1),
+        clay: resources.argila / (costs.clay || 1),
+        iron: resources.ferro / (costs.iron || 1)
+    };
+    
+    // Encontra o recurso com menor ratio (gargalo)
+    let minRatio = Infinity;
+    let bottleneck = null;
+    
+    for (const [resource, ratio] of Object.entries(ratios)) {
+        if (ratio < minRatio) {
+            minRatio = ratio;
+            bottleneck = { resource, ratio, needed: costs[resource] - resources[resource.replace('wood', 'madeira').replace('clay', 'argila').replace('iron', 'ferro')] };
+        }
+    }
+    
+    state.previousBottleneck = bottleneck;
+    saveVillageState(state);
+    
+    if (bottleneck) {
+        console.log(`Gargalo identificado: ${bottleneck.resource} (ratio: ${bottleneck.ratio.toFixed(2)})`);
+    }
+    
+    return bottleneck;
+}
+
 // Função para carregar o estado salvo do localStorage e mostrar no console
 function loadAutomationState() {
     // Verifica se o estado foi salvo no localStorage
@@ -3224,6 +3570,19 @@ function loadAutomationState() {
         // Converte o estado salvo para booleano
         isBuildAutomationActive = savedState === 'true';
     }
+
+    // Carrega e exibe estado da aldeia
+    const villageState = loadVillageState();
+    console.log('=== ESTADO DA ALDEIA ===');
+    console.log(`Último target: ${villageState.lastTarget ? `${villageState.lastTarget.id} nível ${villageState.lastTarget.level}` : 'Nenhum'}`);
+    console.log(`Último sucesso: ${villageState.lastSuccess ? new Date(villageState.lastSuccess).toLocaleTimeString() : 'Nunca'}`);
+    console.log(`Último erro: ${villageState.lastError ? new Date(villageState.lastError).toLocaleTimeString() : 'Nunca'}`);
+    console.log(`Falhas consecutivas: ${villageState.consecutiveFailures}`);
+    console.log(`Cooldown até: ${villageState.cooldownUntil ? new Date(villageState.cooldownUntil).toLocaleTimeString() : 'Nenhum'}`);
+    console.log(`Targets bloqueados: ${villageState.blockedTargets.length}`);
+    console.log(`Milestone atual: ${villageState.currentMilestone}`);
+    console.log(`Action Lock: ${villageState.actionLock ? 'ATIVO' : 'inativo'}`);
+    console.log('========================');
 
     // Exibe no console se a automação está ativada ou desativada
     console.log(`Automação de construção está ${isBuildAutomationActive ? 'Ativada' : 'Desativada'}`);
@@ -3283,6 +3642,22 @@ async function executeBuildOrder() {
         return; // Não executa se a URL não for a correta ou a automação não estiver ativada
     }
 
+    // Carrega estado persistente da aldeia
+    let villageState = loadVillageState();
+    
+    // Verifica cooldown inicial
+    if (isInCooldown()) {
+        const waitTime = villageState.cooldownUntil - Date.now();
+        if (waitTime > 0) {
+            console.log(`Aguardando cooldown (${Math.ceil(waitTime/1000)}s)...`);
+            await wait(Math.min(waitTime, 300000)); // Espera até 5 minutos máximo
+            villageState = loadVillageState(); // Recarrega estado após espera
+        }
+    }
+
+    // Limpa blocos expirados
+    cleanupBlockedTargets();
+
     let buildOrder = [...recruitmentConfig.order]; // Cópia da ordem de construção configurada
     const executionConfig = recruitmentConfig.execution || {
         mode: "followOrder", // Pode ser 'followOrder' ou 'opportunistic'
@@ -3302,11 +3677,33 @@ async function executeBuildOrder() {
     console.log(`Recompensas automáticas: ${activateRewards ? "Ativadas" : "Desativadas"}`);
     console.log(`Otimização de tempo: ${optimizeTime ? "Ativada" : "Desativada"}`);
     console.log(`Orçamento máximo de Pontos Premium: ${premiumBudget}`);
+    console.log(`Milestone atual: ${villageState.currentMilestone}`);
+    console.log(`Targets bloqueados: ${villageState.blockedTargets.length}`);
 
     setupPageObserver(); // Configura o observador de alterações no DOM
 
     // Loop principal de automação
     while (buildOrder.length > 0) {
+        // Recarrega estado a cada iteração
+        villageState = loadVillageState();
+        
+        // Verifica actionLock (previne ações concorrentes)
+        if (villageState.actionLock) {
+            console.log('Ação bloqueada por outro processo, aguardando...');
+            await wait(5000);
+            continue;
+        }
+        
+        // Verifica cooldown
+        if (isInCooldown()) {
+            const waitTime = villageState.cooldownUntil - Date.now();
+            if (waitTime > 0) {
+                console.log(`Em cooldown, aguardando ${Math.ceil(waitTime/1000)}s...`);
+                await wait(Math.min(waitTime, 120000));
+                continue;
+            }
+        }
+
         if (activateRewards) {
             await collectRewards(); // Coleta recompensas, se ativado
         }
@@ -3314,10 +3711,20 @@ async function executeBuildOrder() {
         // **Lógica para Modo SEGUIR A ORDEM**
         if (mode === "followOrder") {
             const { id, level } = buildOrder[0]; // Tenta apenas o primeiro item
+            
+            // Verifica se target está bloqueado
+            if (isTargetBlocked(id, level)) {
+                console.warn(`Target ${id} nível ${level} está bloqueado. Pulando...`);
+                // Se estiver em followOrder e o primeiro estiver bloqueado, para
+                break;
+            }
+            
             const canBuild = await tryToBuild(id, level);
             if (canBuild) {
+                registerSuccess(id, level);
                 buildOrder.shift(); // Remove o item construído
             } else {
+                registerFailure(id, level, 'nao_foi_possivel_construir');
                 console.log(`Modo "Seguir a Ordem": Construção pausada, aguardando ${id} nível ${level}`);
                 break; // Se o edifício não puder ser construído, interrompe o loop
             }
@@ -3328,11 +3735,21 @@ async function executeBuildOrder() {
             let builtAtLeastOne = false;
             for (let i = 0; i < buildOrder.length; i++) {
                 const { id, level } = buildOrder[i];
+                
+                // Pula targets bloqueados
+                if (isTargetBlocked(id, level)) {
+                    console.log(`Pulando target bloqueado: ${id} nível ${level}`);
+                    continue;
+                }
+                
                 const canBuild = await tryToBuild(id, level);
                 if (canBuild) {
+                    registerSuccess(id, level);
                     buildOrder.splice(i, 1); // Remove o edifício construído
                     builtAtLeastOne = true;
                     break; // Após uma construção bem-sucedida, interrompe o loop
+                } else {
+                    registerFailure(id, level, 'nao_foi_possivel_construir');
                 }
             }
             if (!builtAtLeastOne) {
@@ -3346,6 +3763,9 @@ async function executeBuildOrder() {
             await wait(1000);
         }
         pageUpdated = false;
+        
+        // Pequena pausa entre construções para evitar sobrecarga
+        await wait(2000);
     }
 
     console.log("Construção automática concluída!");
@@ -3355,6 +3775,9 @@ async function executeBuildOrder() {
         observer.disconnect();
     }
     hasExecutedBuildOrder = true;
+    
+    // Salva estado final
+    saveVillageState(loadVillageState());
 }
 
 /**
@@ -3364,28 +3787,57 @@ async function executeBuildOrder() {
  * @returns {boolean} - Retorna true se a construção foi bem-sucedida.
  */
 async function tryToBuild(id, level) {
-    const buildingName = getBuildingName(id.charAt(0).toUpperCase() + id.slice(1));
-
-    // Verifica se o edifício já está completo
-    const buildingStatus = document.querySelector(`.building-row[data-building="${id}"]`);
-    if (buildingStatus && buildingStatus.innerText.includes("Edifício totalmente construído")) {
-        console.log(`${buildingName} já está totalmente construído.`);
+    // Adquire lock de ação
+    if (!tryAcquireActionLock()) {
+        console.warn('Não foi possível adquirir actionLock para construção');
         return false;
     }
 
-    // Corrige o seletor para argila, pois usa "stone" no DOM
-    let dataBuildingSelector = id === "clay" ? "stone" : id;
-    const buildButton = document.querySelector(`a.btn-build[data-building="${dataBuildingSelector}"][data-level-next="${level}"]`);
+    try {
+        const buildingName = getBuildingName(id.charAt(0).toUpperCase() + id.slice(1));
 
-    // Se encontrar o botão, tenta construir
-    if (buildButton) {
-        console.log(`Construindo: ${buildingName}, Nível: ${level}`);
-        buildButton.click();
-        await wait(2000); // Espera 2 segundos para o clique ser processado
-        await checkAndClickFinish();
-        return true;
-    } else {
-        console.warn(`Não foi possível construir ${buildingName} (Nível ${level}).`);
+        // Verifica se o edifício já está completo
+        const buildingStatus = document.querySelector(`.building-row[data-building="${id}"]`);
+        if (buildingStatus && buildingStatus.innerText.includes("Edifício totalmente construído")) {
+            console.log(`${buildingName} já está totalmente construído.`);
+            releaseActionLock();
+            return false;
+        }
+
+        // Corrige o seletor para argila, pois usa "stone" no DOM
+        let dataBuildingSelector = id === "clay" ? "stone" : id;
+        const buildButton = document.querySelector(`a.btn-build[data-building="${dataBuildingSelector}"][data-level-next="${level}"]`);
+
+        // Se encontrar o botão, tenta construir
+        if (buildButton) {
+            console.log(`Construindo: ${buildingName}, Nível: ${level}`);
+            
+            // Identifica gargalo antes de construir (opcional, para logging)
+            const resources = {
+                madeira: parseInt(document.querySelector('.wood')?.textContent?.replace(/\./g, '') || '0', 10),
+                argila: parseInt(document.querySelector('.stone')?.textContent?.replace(/\./g, '') || '0', 10),
+                ferro: parseInt(document.querySelector('.iron')?.textContent?.replace(/\./g, '') || '0', 10)
+            };
+            
+            // Custos aproximados (poderiam ser obtidos do tooltip do botão)
+            const costs = { wood: 0, clay: 0, iron: 0 }; // Placeholder
+            identifyBottleneck(resources, costs);
+            
+            buildButton.click();
+            await wait(2000); // Espera 2 segundos para o clique ser processado
+            await checkAndClickFinish();
+            
+            // Nota: O sucesso real será confirmado pelo observer e registrado em executeBuildOrder
+            releaseActionLock();
+            return true;
+        } else {
+            console.warn(`Não foi possível construir ${buildingName} (Nível ${level}). Botão não encontrado.`);
+            releaseActionLock();
+            return false;
+        }
+    } catch (error) {
+        console.error(`Erro durante tentativa de construção de ${id} nível ${level}:`, error);
+        releaseActionLock();
         return false;
     }
 }
