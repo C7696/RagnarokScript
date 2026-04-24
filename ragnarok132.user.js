@@ -901,6 +901,10 @@
         var safeStr = function (p) { return p.catch(() => ''); };
         var statueEnabled = (typeof game_data !== 'undefined' && game_data.village.buildings.statue !== undefined);
 
+        // Buscar dados adicionais para previsão de overflow (loot e rewards)
+        // Nota: Em versão futura, buscar screen=overview_v para ataques em andamento
+        // e screen=place para quests/tasks ativas
+        
         return Promise.all([
             safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=flags')),
             safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=main')),
@@ -929,6 +933,13 @@
                 if (mK) knightRushId = mK[1];
             }
 
+            // Estimar loot esperado baseado em recursos disponíveis para saque (simplificado)
+            // Em versão completa, buscar attacks em andamento via overview_v
+            var lootEstimadoSimples = (rawData.village.wood_float + rawData.village.stone_float + rawData.village.iron_float) * 0.1; // 10% dos recursos como estimativa de loot incoming
+            
+            // Estimar rewards de quests (simplificado - seria preenchido via API de quests)
+            var rewardsQuestsEstimado = 0; // Placeholder para integração futura com quests
+
             var state = {
                 villageId: villageId,
                 csrf: rawData.csrf || extractCsrf(mainHtml),
@@ -945,7 +956,10 @@
                 flags: parseFlagsFromHtml(flagsHtml),
                 flagAssigned: isFlagAssignedInHtml(flagsHtml), // CORRIGIDO
                 knight: statueInfo,
-                podeSerConstruido: {}
+                podeSerConstruido: {},
+                // Sistema proativo de previsão de overflow
+                lootEsperado: lootEstimadoSimples,      // Estimativa baseada em recursos (futuro: attacks em andamento)
+                rewardsEsperados: rewardsQuestsEstimado // Estimativa de rewards (futuro: integração quests)
             };
 
             for (var ed in TW_BUILDING_REQS) {
@@ -1038,43 +1052,104 @@ function motorDeDecisaoMacro(state) {
             var selectedTarget = null;
             var taxaPop = (state.populacao.current / (state.populacao.max || 1)) * 100;
             
-            // Verificação de gargalos críticos
+            // ==========================================
+            // SISTEMA PROATIVO DE FARM - 4 NÍVEIS DE ALERTA
+            // ==========================================
+            // 82% → observação | 88% → preparação | 92% → prioridade alta | 95%+ → emergência
+            var nivelAlertaFarm = 'normal';
+            if (taxaPop >= 95) nivelAlertaFarm = 'emergencia';
+            else if (taxaPop >= 92) nivelAlertaFarm = 'prioridade_alta';
+            else if (taxaPop >= 88) nivelAlertaFarm = 'preparacao';
+            else if (taxaPop >= 82) nivelAlertaFarm = 'observacao';
+            
+            // ==========================================
+            // SISTEMA PROATIVO DE STORAGE - PREVISÃO DE OVERFLOW
+            // ==========================================
+            // Considera: produção atual, loot esperado, rewards, tempo até próxima conclusão
             var riscoArmazem = false;
             var recursosPercent = {
                 wood: state.recursos.wood / state.recursos.max,
                 stone: state.recursos.stone / state.recursos.max,
                 iron: state.recursos.iron / state.recursos.max
             };
-            if (recursosPercent.wood > 0.95 || recursosPercent.stone > 0.95 || recursosPercent.iron > 0.95) {
-                riscoArmazem = true;
-            }
             
-            // Calcular tempo até gargalo (em horas)
-            var tempoAteGargalo = 999;
+            // Calcular produção total por hora de todos os recursos
+            var producaoTotalHora = (state.producao.wood || 0) + (state.producao.stone || 0) + (state.producao.iron || 0);
+            
+            // Estimar loot esperado baseado em ataques em andamento (se disponível)
+            var lootEsperado = state.lootEsperado || 0;
+            
+            // Estimar rewards de quests/tasks (se disponível)
+            var rewardsEsperados = state.rewardsEsperados || 0;
+            
+            // Recursos totais projetados (atual + produção + loot + rewards)
+            var recursosTotaisProjetados = state.recursos.wood + state.recursos.stone + state.recursos.iron + lootEsperado + rewardsEsperados;
+            var capacidadeTotalArmazem = state.recursos.max * 3; // 3 recursos
+            
+            // Percentual projetado considerando influxo futuro
+            var percentualProjetado = recursosTotaisProjetados / capacidadeTotalArmazem;
+            
+            // Verificar overflow iminente para cada recurso individualmente
+            var tempoAteOverflow = { wood: 999, stone: 999, iron: 999 };
             for (var res in recursosPercent) {
                 if (recursosPercent[res] > 0.8) {
                     var producaoHora = state.producao[res] || 1;
                     var capacidadeRestante = state.recursos.max - state.recursos[res];
                     var horas = capacidadeRestante / (producaoHora || 1);
-                    if (horas < tempoAteGargalo) tempoAteGargalo = horas;
+                    tempoAteOverflow[res] = horas;
+                }
+            }
+            
+            // Risco de armazém cheio: se algum recurso >95% OU projetado >90%
+            if (recursosPercent.wood > 0.95 || recursosPercent.stone > 0.95 || recursosPercent.iron > 0.95 || percentualProjetado > 0.90) {
+                riscoArmazem = true;
+            }
+            
+            // Calcular tempo até gargalo mais crítico (em horas)
+            var tempoAteGargalo = 999;
+            for (var res in tempoAteOverflow) {
+                if (tempoAteOverflow[res] < tempoAteGargalo) {
+                    tempoAteGargalo = tempoAteOverflow[res];
+                }
+            }
+            
+            // Ajustar tempo até gargalo considerando loot e rewards
+            if (lootEsperado > 0 || rewardsEsperados > 0) {
+                var influxoExtraHora = (lootEsperado + rewardsEsperados) / 24; // Distribuído em 24h
+                var capacidadeRestanteTotal = (state.recursos.max * 3) - (state.recursos.wood + state.recursos.stone + state.recursos.iron);
+                var tempoComInfluxoExtra = capacidadeRestanteTotal / ((producaoTotalHora || 1) + influxoExtraHora);
+                if (tempoComInfluxoExtra < tempoAteGargalo) {
+                    tempoAteGargalo = tempoComInfluxoExtra;
                 }
             }
 
-            // PRIORIDADE 1: Gargalo de população (>92%)
-            if (taxaPop > 92 && state.podeSerConstruido['farm']) {
+            // ==========================================
+            // PRIORIDADE 1: GARGALO DE POPULAÇÃO (FARM)
+            // ==========================================
+            // Emergência (95%+): Farm prioritário absoluto
+            // Prioridade Alta (92-95%): Farm com alta prioridade
+            // Preparação (88-92%): Farm se houver vaga e sem gargalo mais urgente
+            // Observação (82-88%): Considerar farm no score
+            if (nivelAlertaFarm === 'emergencia' && state.podeSerConstruido['farm']) {
                 selectedTarget = 'farm'; 
-                visHUD.gargalo = "POPULAÇÃO";
-                visHUD.motivo = "População em " + Math.round(taxaPop) + "%";
+                visHUD.gargalo = "POPULAÇÃO (EMERGÊNCIA)";
+                visHUD.motivo = "População em " + Math.round(taxaPop) + "% - Paralisando crescimento!";
             }
-            // PRIORIDADE 2: Risco iminente de armazém cheio (<2h para encher)
-            else if (riscoArmazem && tempoAteGargalo < 2) {
+            // PRIORIDADE 1B: Risco iminente de armazém cheio (<1.5h para encher)
+            else if (riscoArmazem && tempoAteGargalo < 1.5) {
                 // Escolher edifício de recurso mais carente
                 var recursoMaisCarente = Object.keys(recursosPercent).reduce((a, b) => recursosPercent[a] > recursosPercent[b] ? a : b);
                 if (state.podeSerConstruido[recursoMaisCarente]) {
                     selectedTarget = recursoMaisCarente;
-                    visHUD.gargalo = "ARMAZÉM CHEIO";
+                    visHUD.gargalo = "ARMAZÉM CHEIO (CRÍTICO)";
                     visHUD.motivo = Math.round(recursosPercent[recursoMaisCarente]*100) + "% - " + Math.round(tempoAteGargalo*60) + "min";
                 }
+            }
+            // PRIORIDADE 1C: Farm em nível de prioridade alta (92-95%)
+            else if (nivelAlertaFarm === 'prioridade_alta' && state.podeSerConstruido['farm']) {
+                selectedTarget = 'farm';
+                visHUD.gargalo = "POPULAÇÃO (ALTA)";
+                visHUD.motivo = "População em " + Math.round(taxaPop) + "% - Expansão necessária";
             }
             // PRIORIDADE 3: Marcos estratégicos com análise de custo-benefício
             else if (activeMilestone) {
@@ -1113,10 +1188,22 @@ function motorDeDecisaoMacro(state) {
                         else if (['wall', 'hide', 'church', 'watchtower'].includes(ed)) ajustePerfil = profile.defense;
                         else if (['main', 'market', 'snob'].includes(ed)) ajustePerfil = profile.expansion;
                         
-                        // Tempo até resolver gargalo atual
+                        // Tempo até resolver gargalo atual (agora usa sistema de níveis de alerta)
                         var urgenciaGargalo = 1.0;
-                        if (ed === 'farm' && taxaPop > 85) urgenciaGargalo = 1.3;
-                        if (riscoArmazem && ['wood', 'stone', 'iron'].includes(ed)) urgenciaGargalo = 1.2;
+                        if (ed === 'farm') {
+                            // Farm: urgência baseada no nível de alerta do sistema proativo
+                            if (nivelAlertaFarm === 'emergencia') urgenciaGargalo = 2.0;
+                            else if (nivelAlertaFarm === 'prioridade_alta') urgenciaGargalo = 1.5;
+                            else if (nivelAlertaFarm === 'preparacao') urgenciaGargalo = 1.2;
+                            else if (nivelAlertaFarm === 'observacao') urgenciaGargalo = 1.1;
+                        }
+                        if (riscoArmazem && ['wood', 'stone', 'iron'].includes(ed)) {
+                            // Storage: urgência baseada no tempo até overflow
+                            if (tempoAteGargalo < 0.5) urgenciaGargalo = 2.5; // <30min = crítico
+                            else if (tempoAteGargalo < 1.0) urgenciaGargalo = 2.0; // <1h = muito urgente
+                            else if (tempoAteGargalo < 1.5) urgenciaGargalo = 1.5; // <1.5h = urgente
+                            else urgenciaGargalo = 1.2;
+                        }
                         
                         // Bônus do HQ como acelerador de throughput global
                         // HQ não é só mais um edifício - é multiplicador de produtividade
@@ -1190,7 +1277,22 @@ function motorDeDecisaoMacro(state) {
                             bonusHQProdutoividade = 1.0 + bonusHQ;
                         }
 
-                        var score = (pesoBase * ajustePerfil * bonusHQProdutoividade) / (custoNormalizado * (nivelAtual + 1) * 0.1);
+                        // Sistema proativo de urgência para Farm e Storage (mesma lógica do milestone)
+                        var urgenciaGargaloGeral = 1.0;
+                        if (ed === 'farm') {
+                            if (nivelAlertaFarm === 'emergencia') urgenciaGargaloGeral = 2.0;
+                            else if (nivelAlertaFarm === 'prioridade_alta') urgenciaGargaloGeral = 1.5;
+                            else if (nivelAlertaFarm === 'preparacao') urgenciaGargaloGeral = 1.2;
+                            else if (nivelAlertaFarm === 'observacao') urgenciaGargaloGeral = 1.1;
+                        }
+                        if (riscoArmazem && ['wood', 'stone', 'iron'].includes(ed)) {
+                            if (tempoAteGargalo < 0.5) urgenciaGargaloGeral = 2.5;
+                            else if (tempoAteGargalo < 1.0) urgenciaGargaloGeral = 2.0;
+                            else if (tempoAteGargalo < 1.5) urgenciaGargaloGeral = 1.5;
+                            else urgenciaGargaloGeral = 1.2;
+                        }
+
+                        var score = (pesoBase * ajustePerfil * bonusHQProdutoividade * urgenciaGargaloGeral) / (custoNormalizado * (nivelAtual + 1) * 0.1);
                         
                         // Bônus adicional para marcos estratégicos do HQ
                         if (ed === 'main') {
