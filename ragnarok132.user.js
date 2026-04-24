@@ -376,10 +376,13 @@
         var opts = {
             method: method || 'GET',
             credentials: 'include',
-            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            headers: { 
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json, text/javascript, */*; q=0.01'
+            },
         };
         if (body) {
-            opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+            opts.headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
             opts.body = body;
         }
         return win.fetch(url, opts).then(function (r) { return r.text(); });
@@ -2252,8 +2255,8 @@ function motorDeDecisaoMacro(state, villageId) {
     // Função bgBuildGeneric atualizada para ser assíncrona (usada como fallback em segundo plano)
     async function bgBuildGeneric(villageId, building, csrf) {
         var origin = window.location.origin;
-        // URL correta para upgrade de edifícios no Tribal Wars
-        var buildUrl = origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=upgrade_building&type=' + building;
+        // URL correta para upgrade de edifícios no Tribal Wars (type=main é obrigatório)
+        var buildUrl = origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=upgrade_building&type=main';
         var body = 'id=' + building + '&force=1&destroy=0&source=' + villageId + '&h=' + csrf;
 
         log('[builder] Solicitando upgrade de ' + building + '...', 'info');
@@ -2344,9 +2347,15 @@ function motorDeDecisaoMacro(state, villageId) {
     // MAIN CHECKLIST ORCHESTRATOR - O CORAÇÃO DO BOT (V5.2)
     // ============================================================
    function bgBuildRush(villageId, orderId, csrf) {
-        var url = window.location.origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=build_order_reduce&id=' + orderId + '&destroy=0&h=' + csrf;
-        log('[rush] Disparando finalização instantânea para ID: ' + orderId, 'info');
+        // Busca o CSRF mais atualizado diretamente do objeto do jogo para não usar token velho
+        var activeCsrf = (typeof unsafeWindow !== 'undefined' && unsafeWindow.game_data) 
+            ? unsafeWindow.game_data.csrf 
+            : (game_data ? game_data.csrf : csrf);
 
+        // Estrutura idêntica ao log capturado
+        var url = window.location.origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=build_order_reduce&h=' + activeCsrf + '&id=' + orderId + '&destroy=0';
+        
+        log('[rush] Disparando finalização instantânea para ID: ' + orderId, 'info');
         return twFetch(url, 'GET').then(resp => {
             log('[rush] Resposta do servidor recebida.', 'success');
             return true;
