@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tribal Wars - Smart Automation
 // @namespace    http://tampermonkey.net/
-// @version      6.0
-// @description  Motor de precisão com validação executável: recursos, botão, fila e confirmação real
+// @version      7.0
+// @description  Motor de precisão com memória, anti-loop e cooldown por aldeia
 // @author       You
 // @match        *://*.tribalwars.com.br/*
 // @match        *://*.divoke-kmene.sk/*
@@ -129,6 +129,162 @@
         defender: { resource: 0.9, military: 0.8, defense: 1.5, expansion: 0.5 },
         farmer:   { resource: 1.4, military: 0.6, defense: 0.7, expansion: 0.8 },
         noble:    { resource: 1.1, military: 1.2, defense: 0.9, expansion: 1.5 }
+    };
+
+    // ============================================================
+    // SISTEMA DE MEMÓRIA E ANTI-LOOP POR ALDEIA
+    // ============================================================
+    var VillageMemory = {
+        // Chaves de persistência por villageId
+        KEYS: {
+            lastTarget: 'village_last_target_',
+            lastSuccess: 'village_last_success_',
+            lastError: 'village_last_error_',
+            cooldownUntil: 'village_cooldown_until_',
+            previousBottleneck: 'village_prev_bottleneck_',
+            currentMilestone: 'village_current_milestone_',
+            consecutiveFails: 'village_consecutive_fails_',
+            blockedTargets: 'village_blocked_targets_',
+            actionLock: 'village_action_lock_'
+        },
+        
+        // Duração dos cooldowns em ms
+        COOLDOWNS: {
+            BUILD_FAIL: 300000,      // 5 minutos após falha de construção
+            TARGET_BLOCK: 600000,    // 10 minutos para targets problemáticos
+            ACTION_LOCK: 3000,       // 3 segundos entre ações
+            SOFT_RESET: 1800000      // 30 minutos para reset suave
+        },
+        
+        // Obter memória completa de uma aldeia
+        get: function(villageId) {
+            return {
+                lastTarget: GM_getValue(this.KEYS.lastTarget + villageId, null),
+                lastSuccess: GM_getValue(this.KEYS.lastSuccess + villageId, null),
+                lastError: GM_getValue(this.KEYS.lastError + villageId, null),
+                cooldownUntil: GM_getValue(this.KEYS.cooldownUntil + villageId, 0),
+                previousBottleneck: GM_getValue(this.KEYS.previousBottleneck + villageId, null),
+                currentMilestone: GM_getValue(this.KEYS.currentMilestone + villageId, null),
+                consecutiveFails: GM_getValue(this.KEYS.consecutiveFails + villageId, 0),
+                blockedTargets: GM_getValue(this.KEYS.blockedTargets + villageId, {}),
+                actionLock: GM_getValue(this.KEYS.actionLock + villageId, false)
+            };
+        },
+        
+        // Atualizar campo específico
+        set: function(villageId, field, value) {
+            var key = this.KEYS[field] + villageId;
+            GM_setValue(key, value);
+            log('[memória] ' + field + ' = ' + JSON.stringify(value), 'info');
+        },
+        
+        // Registrar ação bem-sucedida
+        recordSuccess: function(villageId, target) {
+            this.set(villageId, 'lastTarget', target);
+            this.set(villageId, 'lastSuccess', Date.now());
+            this.set(villageId, 'consecutiveFails', 0);
+            this.set(villageId, 'actionLock', false);
+            log('[memória] Sucesso: ' + target, 'success');
+        },
+        
+        // Registrar falha
+        recordError: function(villageId, target, errorType) {
+            var mem = this.get(villageId);
+            var fails = (mem.consecutiveFails || 0) + 1;
+            
+            this.set(villageId, 'lastError', { target: target, type: errorType, time: Date.now() });
+            this.set(villageId, 'consecutiveFails', fails);
+            this.set(villageId, 'cooldownUntil', Date.now() + this.COOLDOWNS.BUILD_FAIL);
+            this.set(villageId, 'actionLock', false);
+            
+            // Bloquear target problemático se falhas consecutivas >= 2
+            if (fails >= 2 && target) {
+                this.blockTarget(villageId, target, this.COOLDOWNS.TARGET_BLOCK);
+            }
+            
+            log('[memória] Erro: ' + target + ' (falhas: ' + fails + ')', 'error');
+        },
+        
+        // Bloquear target temporariamente
+        blockTarget: function(villageId, target, duration) {
+            var mem = this.get(villageId);
+            var blocked = mem.blockedTargets || {};
+            blocked[target] = Date.now() + (duration || this.COOLDOWNS.TARGET_BLOCK);
+            this.set(villageId, 'blockedTargets', blocked);
+            log('[memória] Target bloqueado: ' + target, 'warning');
+        },
+        
+        // Verificar se target está bloqueado
+        isTargetBlocked: function(villageId, target) {
+            var mem = this.get(villageId);
+            var blocked = mem.blockedTargets || {};
+            if (blocked[target] && Date.now() < blocked[target]) {
+                return true;
+            }
+            // Limpar expired
+            for (var t in blocked) {
+                if (Date.now() >= blocked[t]) {
+                    delete blocked[t];
+                }
+            }
+            if (Object.keys(blocked).length < (mem.blockedTargets ? Object.keys(mem.blockedTargets).length : 0)) {
+                this.set(villageId, 'blockedTargets', blocked);
+            }
+            return false;
+        },
+        
+        // Verificar se pode executar ação (actionLock + cooldown)
+        canAct: function(villageId) {
+            var mem = this.get(villageId);
+            var now = Date.now();
+            
+            // Verificar actionLock
+            if (mem.actionLock) {
+                log('[memória] ActionLock ativo', 'warning');
+                return false;
+            }
+            
+            // Verificar cooldown global
+            if (mem.cooldownUntil && now < mem.cooldownUntil) {
+                log('[memória] Em cooldown por ' + Math.round((mem.cooldownUntil - now)/1000) + 's', 'warning');
+                return false;
+            }
+            
+            return true;
+        },
+        
+        // Adquirir lock de ação
+        acquireLock: function(villageId) {
+            if (this.canAct(villageId)) {
+                this.set(villageId, 'actionLock', true);
+                return true;
+            }
+            return false;
+        },
+        
+        // Liberar lock de ação
+        releaseLock: function(villageId) {
+            this.set(villageId, 'actionLock', false);
+        },
+        
+        // Verificar se deve mudar de estratégia (muitas falhas)
+        needsStrategyChange: function(villageId) {
+            var mem = this.get(villageId);
+            return (mem.consecutiveFails || 0) >= 3;
+        },
+        
+        // Reset suave após período longo sem sucesso
+        softReset: function(villageId) {
+            var mem = this.get(villageId);
+            if (mem.lastSuccess && Date.now() - mem.lastSuccess > this.COOLDOWNS.SOFT_RESET) {
+                this.set(villageId, 'consecutiveFails', 0);
+                this.set(villageId, 'blockedTargets', {});
+                this.set(villageId, 'cooldownUntil', 0);
+                log('[memória] Soft reset aplicado', 'warning');
+                return true;
+            }
+            return false;
+        }
     };
 
     // ============================================================
@@ -1153,10 +1309,21 @@
             return state;
         });
     }
-function motorDeDecisaoMacro(state) {
+function motorDeDecisaoMacro(state, villageId) {
         var tasks = [];
         var maxFila = state.premium.ativo ? 5 : 2;
+        
+        // Carregar memória da aldeia
+        var memory = VillageMemory.get(villageId);
+        
         var visHUD = { fase: state.phase, gargalo: 'OK', meta: 'Calculando...', acao: 'Monitorando', motivo: 'Ativo' };
+        
+        // Verificar se deve mudar estratégia por falhas consecutivas
+        if (VillageMemory.needsStrategyChange(villageId)) {
+            log('[motorDeDecisao] Muitas falhas consecutivas, ajustando estratégia', 'warning');
+            visHUD.gargalo = 'AJUSTE';
+            visHUD.motivo = 'Falhas consecutivas detectadas';
+        }
         
         // Carregar perfil do jogador (padrão: balanced)
         var playerProfile = GM_getValue('player_profile_' + state.villageId, 'balanced');
@@ -1193,7 +1360,7 @@ function motorDeDecisaoMacro(state) {
             HUD.set('flag', 'done', 'Bandeira ativa');
         }
 
-        // 3. PALADINO (Com trava de erro do servidor)
+        // 3. PALADINO (Com trava de erro do servidor + memória)
         var pBlock = GM_getValue('knight_blocked_' + state.villageId, 0);
         if (state.knight.canRecruit && Date.now() > pBlock) {
             tasks.push({ id: 'knight', action: 'DO' });
@@ -1207,7 +1374,7 @@ function motorDeDecisaoMacro(state) {
             HUD.set('knight', 'done', 'Paladino ativo');
         }
 
-        // 4. MARCOS ESTRATÉGICOS (Milestones)
+        // 4. MARCOS ESTRATÉGICOS (Milestones) - com persistência
         var activeMilestone = MILESTONES.find(m => {
             for (var ed in m.reqs) {
                 if (state.niveis[ed] === undefined) continue;
@@ -1215,7 +1382,16 @@ function motorDeDecisaoMacro(state) {
             }
             return false;
         });
-        visHUD.meta = activeMilestone ? activeMilestone.label : "Otimização";
+        
+        // Persistir milestone atual na memória
+        if (activeMilestone) {
+            visHUD.meta = activeMilestone.label;
+            if (memory.currentMilestone !== activeMilestone.id) {
+                VillageMemory.set(villageId, 'currentMilestone', activeMilestone.id);
+            }
+        } else {
+            visHUD.meta = "Otimização";
+        }
 
         // Atualizar status da estátua
         if (state.statueEnabled) {
@@ -1504,9 +1680,22 @@ function motorDeDecisaoMacro(state) {
                 }
             }
             if (selectedTarget) {
-                tasks.push({ id: 'build_general', action: 'DO', target: selectedTarget });
-                visHUD.acao = selectedTarget.toUpperCase();
-                HUD.set('build_general', 'running', 'Construindo ' + selectedTarget);
+                // Verificar se target foi bloqueado por falhas anteriores
+                if (VillageMemory.isTargetBlocked(villageId, selectedTarget)) {
+                    log('[motorDeDecisao] Target ' + selectedTarget + ' está bloqueado, buscando alternativa', 'warning');
+                    visHUD.gargalo = 'BLOQUEADO';
+                    visHUD.motivo = 'Target anterior falhou, evitando repetição';
+                    // Não adicionar este target às tarefas
+                } else {
+                    tasks.push({ id: 'build_general', action: 'DO', target: selectedTarget });
+                    visHUD.acao = selectedTarget.toUpperCase();
+                    HUD.set('build_general', 'running', 'Construindo ' + selectedTarget);
+                    
+                    // Persistir gargalo anterior para comparação futura
+                    if (memory.previousBottleneck !== visHUD.gargalo) {
+                        VillageMemory.set(villageId, 'previousBottleneck', visHUD.gargalo);
+                    }
+                }
             } else {
                 HUD.set('build_general', 'idle', 'Aguardando vaga na fila');
             }
@@ -1514,6 +1703,14 @@ function motorDeDecisaoMacro(state) {
             HUD.set('build_general', 'waiting', 'Fila cheia (' + state.filaBuilds + '/' + maxFila + ')');
         }
 
+        // Atualizar memória com última ação planejada
+        if (tasks.length > 0 && !memory.actionLock) {
+            var lastTask = tasks[tasks.length - 1];
+            if (lastTask.target) {
+                VillageMemory.set(villageId, 'lastTarget', lastTask.target);
+            }
+        }
+        
         HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
         return Promise.resolve(tasks);
     }
@@ -1549,13 +1746,33 @@ function motorDeDecisaoMacro(state) {
     }
     function runChecklist(villageId) {
         HUD.init();
+        
+        // Aplicar soft reset se necessário
+        VillageMemory.softReset(villageId);
+        
+        // Verificar se aldeia pode executar ações (actionLock + cooldown)
+        if (!VillageMemory.canAct(villageId)) {
+            log('[runChecklist] Aldeia ' + villageId + ' em cooldown ou bloqueada, aguardando...', 'warning');
+            setTimeout(() => runChecklist(villageId), CONFIG.mainLoopInterval);
+            return;
+        }
+        
+        // Adquirir lock de ação
+        if (!VillageMemory.acquireLock(villageId)) {
+            log('[runChecklist] Não foi possível adquirir actionLock', 'warning');
+            setTimeout(() => runChecklist(villageId), 3000);
+            return;
+        }
+        
         collectVillageState(villageId).then(function (state) {
-            return motorDeDecisaoMacro(state).then(function (tasks) {
+            return motorDeDecisaoMacro(state, villageId).then(function (tasks) {
 
                 var queue = tasks.filter(t => t.action === 'DO');
 
                 function execNext(i) {
                     if (i >= queue.length) {
+                        // Liberar lock ao finalizar todas as tarefas
+                        VillageMemory.releaseLock(villageId);
                         var wait = queue.length > 0 ? 5000 : CONFIG.mainLoopInterval;
                         setTimeout(() => runChecklist(villageId), wait);
                         return;
@@ -1564,18 +1781,44 @@ function motorDeDecisaoMacro(state) {
                     var task = queue[i];
                     var p = Promise.resolve();
 
-                    if (task.id === 'build_rush') p = bgBuildRush(villageId, task.orderId, state.csrf);
-                    else if (task.id === 'knight_rush') p = bgRushKnight(villageId, task.knightId, state.csrf); // EXECUTOR NOVO
+                    if (task.id === 'build_rush') {
+                        p = bgBuildRush(villageId, task.orderId, state.csrf)
+                            .then(function(success) {
+                                if (success) {
+                                    VillageMemory.recordSuccess(villageId, 'rush_' + task.orderId);
+                                } else {
+                                    VillageMemory.recordError(villageId, 'rush_' + task.orderId, 'rush_fail');
+                                }
+                                return success;
+                            });
+                    }
+                    else if (task.id === 'knight_rush') {
+                        p = bgRushKnight(villageId, task.knightId, state.csrf)
+                            .then(function(success) {
+                                if (success) {
+                                    VillageMemory.recordSuccess(villageId, 'knight_rush_' + task.knightId);
+                                } else {
+                                    VillageMemory.recordError(villageId, 'knight_rush_' + task.knightId, 'knight_rush_fail');
+                                }
+                                return success;
+                            });
+                    }
                     else if (task.id === 'build_general') {
+                        // Verificar se target está bloqueado
+                        if (VillageMemory.isTargetBlocked(villageId, task.target)) {
+                            log('[executor] Target ' + task.target + ' está bloqueado, pulando', 'warning');
+                            p = Promise.resolve(false);
+                        }
                         // Validação final antes de executar: garantir que ainda é executável
-                        if (isBuildExecutable(task.target, state, state._mainDoc)) {
+                        else if (isBuildExecutable(task.target, state, state._mainDoc)) {
                             p = bgBuildGeneric(villageId, task.target, state.csrf)
                                 .then(function(success) {
                                     if (success) {
                                         log('[executor] ' + task.target + ' iniciado com sucesso!', 'success');
+                                        VillageMemory.recordSuccess(villageId, task.target);
                                     } else {
-                                        log('[executor] Falha ao iniciar ' + task.target + ', bloqueando por 5min', 'error');
-                                        GM_setValue('build_blocked_' + task.target + '_' + villageId, Date.now() + 300000);
+                                        log('[executor] Falha ao iniciar ' + task.target + ', registrando erro', 'error');
+                                        VillageMemory.recordError(villageId, task.target, 'build_fail');
                                     }
                                     return success;
                                 });
@@ -1584,11 +1827,47 @@ function motorDeDecisaoMacro(state) {
                             p = Promise.resolve(false);
                         }
                     }
-                    else if (task.id === 'statue') p = bgBuildStatue(villageId, state.csrf);
-                    else if (task.id === 'knight') p = bgRecruitKnight(villageId);
-                    else if (task.id === 'flag') p = bgAssignFlagGhost(villageId, state.phase);
+                    else if (task.id === 'statue') {
+                        p = bgBuildStatue(villageId, state.csrf)
+                            .then(function(success) {
+                                if (success) {
+                                    VillageMemory.recordSuccess(villageId, 'statue');
+                                } else {
+                                    VillageMemory.recordError(villageId, 'statue', 'statue_fail');
+                                }
+                                return success;
+                            });
+                    }
+                    else if (task.id === 'knight') {
+                        p = bgRecruitKnight(villageId)
+                            .then(function(success) {
+                                if (success) {
+                                    VillageMemory.recordSuccess(villageId, 'knight');
+                                } else {
+                                    VillageMemory.recordError(villageId, 'knight', 'knight_fail');
+                                }
+                                return success;
+                            });
+                    }
+                    else if (task.id === 'flag') {
+                        p = bgAssignFlagGhost(villageId, state.phase)
+                            .then(function(success) {
+                                if (success) {
+                                    VillageMemory.recordSuccess(villageId, 'flag');
+                                } else {
+                                    VillageMemory.recordError(villageId, 'flag', 'flag_fail');
+                                }
+                                return success;
+                            });
+                    }
 
-                    p.then(() => setTimeout(() => execNext(i + 1), 1500));
+                    p.then(function() {
+                        setTimeout(() => execNext(i + 1), 1500);
+                    }).catch(function(err) {
+                        log('[executor] Erro inesperado: ' + err, 'error');
+                        VillageMemory.recordError(villageId, task.target || task.id, 'unexpected_error');
+                        setTimeout(() => execNext(i + 1), 1500);
+                    });
                 }
                 execNext(0);
             });
