@@ -108,9 +108,18 @@
 
     // Fatores de peso estratégico por fase e tipo de edifício
     const STRATEGIC_WEIGHT = {
-        EARLY: { wood: 1.2, stone: 1.1, iron: 0.8, farm: 1.3, storage: 1.0, main: 1.1, barracks: 1.0, smith: 1.0, statue: 0.9, market: 0.7, stable: 0.6, wall: 0.8, place: 0.5, hide: 0.4, church: 0.3, watchtower: 0.3, garage: 0.2, snob: 0.1 },
-        MID:   { wood: 1.0, stone: 1.0, iron: 1.1, farm: 1.1, storage: 1.0, main: 1.2, barracks: 1.1, smith: 1.2, statue: 1.0, market: 0.9, stable: 1.3, wall: 1.1, place: 0.6, hide: 0.5, church: 0.7, watchtower: 0.6, garage: 0.8, snob: 0.3 },
-        LATE:  { wood: 0.8, stone: 0.8, iron: 1.2, farm: 0.9, storage: 0.9, main: 1.3, barracks: 1.0, smith: 1.3, statue: 1.1, market: 1.0, stable: 1.2, wall: 1.3, place: 0.7, hide: 0.6, church: 0.9, watchtower: 0.8, garage: 1.0, snob: 1.5 }
+        EARLY: { wood: 1.2, stone: 1.1, iron: 0.8, farm: 1.3, storage: 1.0, main: 1.5, barracks: 1.0, smith: 1.0, statue: 0.9, market: 0.7, stable: 0.6, wall: 0.8, place: 0.5, hide: 0.4, church: 0.3, watchtower: 0.3, garage: 0.2, snob: 0.1 },
+        MID:   { wood: 1.0, stone: 1.0, iron: 1.1, farm: 1.1, storage: 1.0, main: 1.8, barracks: 1.1, smith: 1.2, statue: 1.0, market: 0.9, stable: 1.3, wall: 1.1, place: 0.6, hide: 0.5, church: 0.7, watchtower: 0.6, garage: 0.8, snob: 0.3 },
+        LATE:  { wood: 0.8, stone: 0.8, iron: 1.2, farm: 0.9, storage: 0.9, main: 2.0, barracks: 1.0, smith: 1.3, statue: 1.1, market: 1.0, stable: 1.2, wall: 1.3, place: 0.7, hide: 0.6, church: 0.9, watchtower: 0.8, garage: 1.0, snob: 1.5 }
+    };
+    
+    // Bônus do HQ como multiplicador de produtividade (acelera TODAS as construções)
+    const HQ_PRODUCTIVITY_BONUS = {
+        1: 0.00, 2: 0.02, 3: 0.04, 4: 0.06, 5: 0.08,  // +8% aos 5
+        6: 0.10, 7: 0.12, 8: 0.14, 9: 0.16, 10: 0.20, // +20% aos 10 (marco hq_mid)
+        11: 0.22, 12: 0.24, 13: 0.26, 14: 0.28, 15: 0.30,
+        16: 0.32, 17: 0.34, 18: 0.36, 19: 0.38, 20: 0.40,
+        21: 0.42, 22: 0.44, 23: 0.46, 24: 0.48, 25: 0.50  // +50% no máximo
     };
 
     // Perfis de jogador (configurável via GM_setValue)
@@ -1077,6 +1086,9 @@ function motorDeDecisaoMacro(state) {
                 
                 if (candidatos.length > 0) {
                     // Calcular score baseado em: custo real, retorno por tempo, peso estratégico
+                    var nivelHQ = parseInt(state.niveis['main'] || 0);
+                    var bonusHQ = HQ_PRODUCTIVITY_BONUS[nivelHQ] || 0;
+                    
                     var scores = candidatos.map(function(ed) {
                         var custo = TW_BUILDING_COSTS[ed] || [100, 100, 100, 100];
                         var nivelAtual = parseInt(state.niveis[ed] || 0);
@@ -1106,8 +1118,20 @@ function motorDeDecisaoMacro(state) {
                         if (ed === 'farm' && taxaPop > 85) urgenciaGargalo = 1.3;
                         if (riscoArmazem && ['wood', 'stone', 'iron'].includes(ed)) urgenciaGargalo = 1.2;
                         
-                        // Score final: (peso * retorno * urgencia * perfil) / (custo * (nivel+1))
-                        var score = (pesoBase * retornoRecurso * urgenciaGargalo * ajustePerfil) / (custoNormalizado * (nivelAtual + 1) * 0.1);
+                        // Bônus do HQ como acelerador de throughput global
+                        // HQ não é só mais um edifício - é multiplicador de produtividade
+                        var bonusHQProdutoividade = 1.0;
+                        if (ed === 'main') {
+                            // Investir no HQ dá retorno exponencial: acelera TODAS as construções futuras
+                            // Quanto maior o nível atual do HQ, maior o ganho marginal de upar mais
+                            bonusHQProdutoividade = 1.0 + (bonusHQ * 2.5); // Multiplicador agressivo para HQ
+                        } else {
+                            // Outros edifícios se beneficiam do HQ existente
+                            bonusHQProdutoividade = 1.0 + bonusHQ;
+                        }
+                        
+                        // Score final: (peso * retorno * urgencia * perfil * bonusHQ) / (custo * (nivel+1))
+                        var score = (pesoBase * retornoRecurso * urgenciaGargalo * ajustePerfil * bonusHQProdutoividade) / (custoNormalizado * (nivelAtual + 1) * 0.1);
                         
                         // Bonus por ser pré-requisito direto de outras construções importantes
                         var bonusPreReq = 0;
@@ -1115,6 +1139,12 @@ function motorDeDecisaoMacro(state) {
                             if (TW_BUILDING_REQS[otherEd][ed] && !state.podeSerConstruido[otherEd]) {
                                 bonusPreReq += 0.2;
                             }
+                        }
+                        
+                        // Bônus adicional para marcos estratégicos do HQ
+                        if (ed === 'main') {
+                            if (nivelAtual < 5) score *= 1.3; // Rush para hq_early
+                            else if (nivelAtual >= 5 && nivelAtual < 10) score *= 1.2; // Rush para hq_mid
                         }
                         
                         return { ed: ed, score: score + bonusPreReq, custo: custoNormalizado, tempo: tempoConstrucao };
@@ -1130,36 +1160,53 @@ function motorDeDecisaoMacro(state) {
             }
             // PRIORIDADE 4: Otimização geral baseada em score quando não há milestone ativo
             else {
-                var todosCandidatos = Object.keys(TW_BUILDING_REQS).filter(ed => 
-                    state.podeSerConstruido[ed] && 
+                var todosCandidatos = Object.keys(TW_BUILDING_REQS).filter(ed =>
+                    state.podeSerConstruido[ed] &&
                     ed !== 'snob' && // Snob só via milestone específico
                     (state.niveis[ed] || 0) < 25 // Limite prático
                 );
-                
+
                 if (todosCandidatos.length > 0) {
+                    var nivelHQ = parseInt(state.niveis['main'] || 0);
+                    var bonusHQ = HQ_PRODUCTIVITY_BONUS[nivelHQ] || 0;
+                    
                     var scoresGerais = todosCandidatos.map(function(ed) {
                         var custo = TW_BUILDING_COSTS[ed] || [100, 100, 100, 100];
                         var nivelAtual = parseInt(state.niveis[ed] || 0);
                         var custoNormalizado = ((custo[0] + custo[1] + custo[2]) * Math.pow(1.5, nivelAtual)) / 100;
                         var pesoBase = STRATEGIC_WEIGHT[state.phase][ed] || 1.0;
                         var ajustePerfil = 1.0;
-                        
+
                         if (['wood', 'stone', 'iron'].includes(ed)) ajustePerfil = profile.resource;
                         else if (['barracks', 'stable', 'garage', 'smith'].includes(ed)) ajustePerfil = profile.military;
                         else if (['wall', 'hide', 'church', 'watchtower'].includes(ed)) ajustePerfil = profile.defense;
                         else if (['main', 'market', 'snob'].includes(ed)) ajustePerfil = profile.expansion;
+
+                        // Bônus do HQ como acelerador de throughput global
+                        var bonusHQProdutoividade = 1.0;
+                        if (ed === 'main') {
+                            bonusHQProdutoividade = 1.0 + (bonusHQ * 2.5);
+                        } else {
+                            bonusHQProdutoividade = 1.0 + bonusHQ;
+                        }
+
+                        var score = (pesoBase * ajustePerfil * bonusHQProdutoividade) / (custoNormalizado * (nivelAtual + 1) * 0.1);
                         
-                        var score = (pesoBase * ajustePerfil) / (custoNormalizado * (nivelAtual + 1) * 0.1);
+                        // Bônus adicional para marcos estratégicos do HQ
+                        if (ed === 'main') {
+                            if (nivelAtual < 5) score *= 1.3;
+                            else if (nivelAtual >= 5 && nivelAtual < 10) score *= 1.2;
+                        }
+                        
                         return { ed: ed, score: score };
                     });
-                    
+
                     scoresGerais.sort((a, b) => b.score - a.score);
                     selectedTarget = scoresGerais[0].ed;
                     visHUD.gargalo = "OTIMIZAÇÃO";
                     visHUD.motivo = "Melhor ROI: " + selectedTarget;
                 }
             }
-
             if (selectedTarget) {
                 tasks.push({ id: 'build_general', action: 'DO', target: selectedTarget });
                 visHUD.acao = selectedTarget.toUpperCase();
