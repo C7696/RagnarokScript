@@ -1960,8 +1960,8 @@ function motorDeDecisaoMacro(state, villageId) {
 
         // 1. Estratégia Direta: Procurar pela LINHA da tabela específica do edifício
         const rowSelectors = [
-            `tr[id*="${buildingName}_buildrow"]`,
-            `tr#${buildingName}_buildrow_${buildingName}`,
+            `tr[id*="${buildingName}_buildrow"]`, 
+            `tr#${buildingName}_buildrow_${buildingName}`, 
             `tr[id^="${buildingName}_buildrow"]`
         ];
 
@@ -1974,10 +1974,9 @@ function motorDeDecisaoMacro(state, villageId) {
         let btn = null;
         let usedStrategy = "";
 
-        // Se achou a linha, procura o botão DENTRO dela (muito mais seguro)
+        // Se achou a linha, procura o botão DENTRO dela
         if (row) {
             console.log(`[TWBot] 📍 Linha da tabela encontrada para ${buildingName}. Buscando botão interno...`);
-            
             const internalCandidates = row.querySelectorAll('a[id*="buildlink"], a.btn, input[type="submit"], button');
             
             for (const el of internalCandidates) {
@@ -1997,9 +1996,9 @@ function motorDeDecisaoMacro(state, villageId) {
             }
         }
 
-        // 2. Fallback Global: Se não achou pela linha, usa os seletores gerais
+        // 2. Fallback Global
         if (!btn) {
-            console.log(`[TWBot] 🔍 Linha não encontrada ou botão não estava nela. Tentando seletores globais...`);
+            console.log(`[TWBot] 🔍 Linha não encontrada. Tentando seletores globais...`);
             const possibleSelectors = [
                 `a[id*="${buildingName}_buildlink"]:not(.disabled)`,
                 `a.btn-build[data-building="${buildingName}"]:not(.disabled)`,
@@ -2016,7 +2015,7 @@ function motorDeDecisaoMacro(state, villageId) {
             }
         }
 
-        // 3. Fallback Visual (Último recurso)
+        // 3. Fallback Visual
         if (!btn) {
             const contentArea = document.querySelector('td#content_value');
             if (contentArea) {
@@ -2036,8 +2035,7 @@ function motorDeDecisaoMacro(state, villageId) {
 
         // AÇÃO FINAL
         if (btn) {
-            console.log(`[TWBot] ✅ SUCESSO! Botão encontrado via: ${usedStrategy}`, btn);
-            
+            console.log(`[TWBot] ✅ SUCESSO! Botão encontrado via: ${usedStrategy}`);
             btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
             await new Promise(r => setTimeout(r, 600));
 
@@ -2050,18 +2048,32 @@ function motorDeDecisaoMacro(state, villageId) {
             console.log(`[TWBot] 🖱️ Clique enviado para ${buildingName}`);
             return true;
         } else {
-            console.warn(`[TWBot] ❌ FALHA: Nenhum botão encontrado para ${buildingName}.`);
-            console.warn(`[TWBot] 💡 Dica: Verifique se a fila está cheia ou se faltam recursos.`);
-            
-            if(row) {
-                console.log("[TWBot] Conteúdo da linha encontrada:", row.innerHTML);
-            } else {
-                console.log("[TWBot] Nem a linha do edifício foi encontrada no DOM.");
-            }
+            console.warn(`[TWBot] ❌ FALHA REAL: Nenhum botão encontrado para ${buildingName}.`);
+            console.warn(`[TWBot] 💡 Motivo provável: Fila cheia, recursos insuficientes ou edifício no nível máximo.`);
             return false;
         }
     }
 
+    // ============================================================================
+    // FUNÇÃO DE CONSTRUÇÃO ASSÍNCRONA - NOVA ABORDAGEM
+    // ============================================================================
+    async function tentarConstruirEdificio(nomeEdificio) {
+        console.log(`[TWBot] 🏗️ Iniciando processo de construção para: ${nomeEdificio}`);
+
+        // A MÁGICA ACONTECE AQUI:
+        // Em vez de verificar o botão manualmente, chamamos a função robusta
+        const sucesso = await clicarBotaoConstruir(nomeEdificio);
+
+        if (sucesso) {
+            console.log(`[TWBot] ✅ Construção de ${nomeEdificio} iniciada com sucesso!`);
+            return true;
+        } else {
+            console.log(`[TWBot] ⏸️ Não foi possível construir ${nomeEdificio} agora. Verificando fila/recursos.`);
+            return false;
+        }
+    }
+
+    // Função bgBuildGeneric mantida para compatibilidade (não utilizada na nova abordagem)
     function bgBuildGeneric(villageId, building, csrf) {
         var origin = window.location.origin;
         // URL correta para upgrade de edifícios no Tribal Wars
@@ -2168,7 +2180,9 @@ function motorDeDecisaoMacro(state, villageId) {
                         }
                         // Validação final antes de executar: garantir que ainda é executável
                         else if (isBuildExecutable(task.target, state, state._mainDoc)) {
-                            p = bgBuildGeneric(villageId, task.target, state.csrf)
+                            // NOVA ABORDAGEM: Usa a função assíncrona robusta clicarBotaoConstruir
+                            // que implementa estratégia multi-camada para encontrar o botão
+                            p = tentarConstruirEdificio(task.target)
                                 .then(function(success) {
                                     if (success) {
                                         log('[executor] ' + task.target + ' iniciado com sucesso!', 'success');
