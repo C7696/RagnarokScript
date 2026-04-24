@@ -1079,9 +1079,36 @@
 
     /**
      * Extrai custos de um edifício específico do DOM ou usa tabela de custos
+     * Prioriza leitura direta do HTML da página para precisão
      */
     function extractCosts(buildingId, mainDoc, fallbackCosts) {
-        // Tentar extrair do tooltip ou elemento de custo no DOM
+        // 1. Tentar extrair da tabela de construção (estrutura padrão TW)
+        // Seletor robusto para a linha da tabela de edifícios
+        var rowSelector = '#main_buildrow_' + buildingId + ', tr[data-building="' + buildingId + '"]';
+        var row = mainDoc.querySelector(rowSelector);
+        
+        if (row) {
+            // Extrai das colunas padrão: madeira(2), pedra(3), ferro(4)
+            var getCellVal = function(idx) {
+                var cell = row.querySelector('td:nth-of-type(' + idx + ')');
+                if (!cell) return 0;
+                var txt = (cell.textContent || cell.innerText || '').trim();
+                // Remove pontos de milhar e extrai apenas números
+                txt = txt.replace(/\./g, '').replace(/[^0-9]/g, '');
+                return parseInt(txt) || 0;
+            };
+            
+            var wood = getCellVal(2);
+            var stone = getCellVal(3);
+            var iron = getCellVal(4);
+            
+            if (wood > 0 || stone > 0 || iron > 0) {
+                log('[DOM Costs] ' + buildingId + ': W=' + wood + ', S=' + stone + ', I=' + iron);
+                return { wood: wood, stone: stone, iron: iron, fromDOM: true };
+            }
+        }
+        
+        // 2. Tentar extrair do tooltip ou elemento de custo no DOM
         var costEl = mainDoc.querySelector('#building_' + buildingId + ' .costs, .building-' + buildingId + ' .costs');
         if (costEl) {
             var text = costEl.textContent || costEl.innerText;
@@ -1092,30 +1119,42 @@
                 return { wood: wood, stone: stone, iron: iron, fromDOM: true };
             }
         }
-        // Fallback: usar tabela de custos com progressão por nível
+        
+        // 3. Fallback: usar tabela de custos com progressão por nível
         if (fallbackCosts) {
             return { wood: fallbackCosts[0], stone: fallbackCosts[1], iron: fallbackCosts[2], time: fallbackCosts[3], fromDOM: false };
         }
+        
         return null;
     }
 
     /**
      * Verifica se há recursos suficientes AGORA para construir
+     * Usa margem de tolerância de 15% para compensar erros de parsing do DOM
      */
     function hasEnoughResources(buildingId, state, costs) {
-        if (!costs) return false;
+        if (!costs) {
+            log('[Recursos] Não foi possível ler custos para ' + buildingId + ', assumindo disponível.', 'warn');
+            return true; // Fail-safe: se não conseguir ler, permite tentativa
+        }
+        
         var currentWood = state.recursos.wood || 0;
         var currentStone = state.recursos.stone || 0;
         var currentIron = state.recursos.iron || 0;
         
-        var enough = (currentWood >= (costs.wood || 0)) &&
-                     (currentStone >= (costs.stone || 0)) &&
-                     (currentIron >= (costs.iron || 0));
+        // Margem de tolerância de 15% para erros de leitura de DOM vs realidade
+        var tolerance = 0.85;
+        
+        var enough = (currentWood >= ((costs.wood || 0) * tolerance)) &&
+                     (currentStone >= ((costs.stone || 0) * tolerance)) &&
+                     (currentIron >= ((costs.iron || 0) * tolerance));
         
         if (!enough) {
             log('[executável] ' + buildingId + ' bloqueado: recursos insuficientes', 'warn');
             log('  Necessário: W=' + (costs.wood||0) + ' S=' + (costs.stone||0) + ' I=' + (costs.iron||0));
             log('  Disponível: W=' + Math.round(currentWood) + ' S=' + Math.round(currentStone) + ' I=' + Math.round(currentIron));
+            log('  Mínimo aceito (' + Math.round(tolerance*100) + '%): W=' + Math.floor((costs.wood||0)*tolerance) + 
+                ' S=' + Math.floor((costs.stone||0)*tolerance) + ' I=' + Math.floor((costs.iron||0)*tolerance));
         }
         return enough;
     }
