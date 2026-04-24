@@ -2279,6 +2279,67 @@ function motorDeDecisaoMacro(state, villageId) {
         }
     }
 
+    // ============================================================
+    // CONSTRUIR EM SEGUNDO PLANO (AJAX FANTASMA)
+    // Não procura botão no DOM. Envia POST direto ao servidor.
+    // ============================================================
+    function bgUpgradeBuilding(villageId, buildingName) {
+        var origin = window.location.origin;
+        var mainUrl = origin + '/game.php?village=' + villageId + '&screen=main';
+        
+        log('[ghost-build] Iniciando construção de ' + buildingName + ' via AJAX...');
+        HUD.set('build_general', 'running', 'Construindo ' + buildingName + '...');
+
+        // Passo 1: Buscar a tela principal para pegar o CSRF atualizado
+        return gmGet(mainUrl).then(function(html) {
+            var csrf = extractCsrf(html);
+            try { if (!csrf && typeof game_data !== 'undefined' && game_data.csrf) csrf = game_data.csrf; } catch (e) {}
+            
+            if (!csrf) {
+                log('[ghost-build] CSRF não encontrado!', 'error');
+                HUD.set('build_general', 'error', 'Sem CSRF');
+                return false;
+            }
+
+            // Passo 2: Enviar o POST de construção (Simula o clique no botão)
+            var buildUrl = origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=upgrade_building&type=main';
+            var body = 'id=' + buildingName + '&force=1&destroy=0&source=' + villageId + '&h=' + csrf;
+
+            return twFetch(buildUrl, 'POST', body).then(function(resp) {
+                var success = false;
+                var errorMsg = '';
+                
+                try {
+                    var json = JSON.parse(resp);
+                    // O TW geralmente retorna { success: true } ou { error: "Mensagem" }
+                    if (json.success) {
+                        success = true;
+                    } else if (json.error) {
+                        errorMsg = json.error;
+                    }
+                } catch (e) {
+                    // Se não for JSON, verifica se a página retornou sucesso por texto
+                    success = resp.indexOf('Construção iniciada') !== -1 || resp.indexOf('success') !== -1;
+                }
+
+                if (success) {
+                    log('[ghost-build] Sucesso! ' + buildingName + ' enfileirado.', 'success');
+                    HUD.set('build_general', 'done', buildingName + ' enfileirado!');
+                    VillageMemory.recordSuccess(villageId, buildingName);
+                    return true;
+                } else {
+                    log('[ghost-build] Falha ao construir ' + buildingName + '. Erro: ' + errorMsg, 'error');
+                    HUD.set('build_general', 'error', 'Falha: ' + errorMsg);
+                    VillageMemory.recordError(villageId, buildingName, 'build_fail');
+                    return false;
+                }
+            });
+        }).catch(function(e) {
+            log('[ghost-build] Erro de rede: ' + e.message, 'error');
+            return false;
+        });
+    }
+
    // ============================================================
     // MAIN CHECKLIST ORCHESTRATOR - O CORAÇÃO DO BOT (V5.2)
     // ============================================================
@@ -2356,11 +2417,11 @@ function motorDeDecisaoMacro(state, villageId) {
                             log('[executor] Target ' + task.target + ' está bloqueado, pulando', 'warning');
                             p = Promise.resolve(false);
                         }
-                        // NOVA ABORDAGEM: Pula verificação antiga e usa diretamente a função assíncrona robusta
-                        // clicarBotaoConstruir que implementa estratégia multi-camada para encontrar o botão
+                        // NOVA ABORDAGEM: Usa a função bgUpgradeBuilding (AJAX FANTASMA) para construir em segundo plano
+                        // sem depender do DOM ou clicar no botão
                         else {
-                            // A própria tentarConstruirEdificio já verifica recursos, fila e botão internamente
-                            p = tentarConstruirEdificio(task.target)
+                            // Chama a função fantasma em vez de procurar o botão no DOM
+                            p = bgUpgradeBuilding(villageId, task.target)
                                 .then(function(success) {
                                     if (success) {
                                         log('[executor] ' + task.target + ' iniciado com sucesso!', 'success');
