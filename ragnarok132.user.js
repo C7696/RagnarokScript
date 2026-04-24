@@ -1950,6 +1950,118 @@ function motorDeDecisaoMacro(state, villageId) {
         HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
         return Promise.resolve(tasks);
     }
+    
+    // ============================================================
+    // FUNÇÃO DE CLIQUE NO DOM PARA CONSTRUÇÃO (Alternativa ao AJAX)
+    // Estratégia multi-camada: linha específica → seletores globais → fallback visual
+    // ============================================================
+    async function clicarBotaoConstruir(buildingName) {
+        console.log(`[TWBot] 🔨 Tentando construir: ${buildingName}`);
+
+        // 1. Estratégia Direta: Procurar pela LINHA da tabela específica do edifício
+        const rowSelectors = [
+            `tr[id*="${buildingName}_buildrow"]`,
+            `tr#${buildingName}_buildrow_${buildingName}`,
+            `tr[id^="${buildingName}_buildrow"]`
+        ];
+
+        let row = null;
+        for (const rSel of rowSelectors) {
+            row = document.querySelector(rSel);
+            if (row) break;
+        }
+
+        let btn = null;
+        let usedStrategy = "";
+
+        // Se achou a linha, procura o botão DENTRO dela (muito mais seguro)
+        if (row) {
+            console.log(`[TWBot] 📍 Linha da tabela encontrada para ${buildingName}. Buscando botão interno...`);
+            
+            const internalCandidates = row.querySelectorAll('a[id*="buildlink"], a.btn, input[type="submit"], button');
+            
+            for (const el of internalCandidates) {
+                const isDisabled = el.classList.contains('disabled') || 
+                                   el.hasAttribute('disabled') || 
+                                   el.style.opacity === '0.5' || 
+                                   el.parentElement?.classList.contains('disabled');
+                
+                const text = (el.innerText || el.value || "").toLowerCase();
+                const isAction = text.includes('bauen') || text.includes('ausbauen') || text.includes('stufe') || el.id.includes('buildlink');
+
+                if (!isDisabled && (isAction || el.id.includes('buildlink'))) {
+                    btn = el;
+                    usedStrategy = `row-specific (${row.id})`;
+                    break;
+                }
+            }
+        }
+
+        // 2. Fallback Global: Se não achou pela linha, usa os seletores gerais
+        if (!btn) {
+            console.log(`[TWBot] 🔍 Linha não encontrada ou botão não estava nela. Tentando seletores globais...`);
+            const possibleSelectors = [
+                `a[id*="${buildingName}_buildlink"]:not(.disabled)`,
+                `a.btn-build[data-building="${buildingName}"]:not(.disabled)`,
+                `form[id*="${buildingName}"] input[type="submit"]:not(.disabled)`,
+                `td#content_value a[id*="buildlink"]:not(.disabled)`
+            ];
+
+            for (const selector of possibleSelectors) {
+                btn = document.querySelector(selector);
+                if (btn) {
+                    usedStrategy = `global-selector (${selector})`;
+                    break;
+                }
+            }
+        }
+
+        // 3. Fallback Visual (Último recurso)
+        if (!btn) {
+            const contentArea = document.querySelector('td#content_value');
+            if (contentArea) {
+                const candidates = contentArea.querySelectorAll('a, input, button');
+                for (const el of candidates) {
+                    const text = (el.innerText || el.value || "").toLowerCase();
+                    const isBuildAction = (text.includes('ausbauen') || text.includes('bauen') || text.match(/stufe\s*\d+/)) && el.offsetParent !== null;
+                    
+                    if (isBuildAction && !el.classList.contains('disabled')) {
+                        btn = el;
+                        usedStrategy = "visual-fallback";
+                        break;
+                    }
+                }
+            }
+        }
+
+        // AÇÃO FINAL
+        if (btn) {
+            console.log(`[TWBot] ✅ SUCESSO! Botão encontrado via: ${usedStrategy}`, btn);
+            
+            btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            await new Promise(r => setTimeout(r, 600));
+
+            btn.focus();
+            btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            await new Promise(r => setTimeout(r, 100));
+            btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+            btn.click();
+            
+            console.log(`[TWBot] 🖱️ Clique enviado para ${buildingName}`);
+            return true;
+        } else {
+            console.warn(`[TWBot] ❌ FALHA: Nenhum botão encontrado para ${buildingName}.`);
+            console.warn(`[TWBot] 💡 Dica: Verifique se a fila está cheia ou se faltam recursos.`);
+            
+            if(row) {
+                console.log("[TWBot] Conteúdo da linha encontrada:", row.innerHTML);
+            } else {
+                console.log("[TWBot] Nem a linha do edifício foi encontrada no DOM.");
+            }
+            return false;
+        }
+    }
+
     function bgBuildGeneric(villageId, building, csrf) {
         var origin = window.location.origin;
         // URL correta para upgrade de edifícios no Tribal Wars
