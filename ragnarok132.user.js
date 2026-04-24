@@ -191,10 +191,10 @@
             motivo: 'Iniciando Camadas de decisão'
         },
         tasks: {
-            flag: { label: 'Bandeira' },
-            statue: { label: 'Estátua' },
-            knight: { label: 'Paladino' },
-            build_general: { label: 'Obras' }
+            flag: { label: 'Bandeira', status: 'idle', detail: '' },
+            statue: { label: 'Estátua', status: 'idle', detail: '' },
+            knight: { label: 'Paladino', status: 'idle', detail: '' },
+            build_general: { label: 'Obras', status: 'idle', detail: '' }
         },
 
         init: function () {
@@ -215,7 +215,10 @@
 
             if (this.minimized) return hdr;
 
+            // Bloco Gerencial (Topo)
             var rows = '<div style="padding: 10px;">';
+            rows += '<div style="background:#1a1c20; padding:8px; border-radius:6px; margin-bottom:10px; border:1px solid #333;">';
+            rows += '<div style="font-size:11px; color:#f39c12; font-weight:bold; margin-bottom:6px;">📊 VISÃO ESTRATÉGICA</div>';
             rows += this._buildDataRow('Fase:', this.info.fase, '#bdc3c7');
             rows += this._buildDataRow('Gargalo:', this.info.gargalo, '#e74c3c');
             rows += '<div style="margin-top:6px; padding-top:6px; border-top:1px dashed #333;"></div>';
@@ -225,7 +228,45 @@
                  + '💡 <b>Razão:</b> ' + this.info.motivo
                  + '</div></div>';
 
+            // Bloco Operacional (Baixo)
+            rows += '<div style="background:#1a1c20; padding:8px; border-radius:6px; border:1px solid #333;">';
+            rows += '<div style="font-size:11px; color:#f39c12; font-weight:bold; margin-bottom:6px;">🔧 STATUS OPERACIONAL</div>';
+            for (var taskId in this.tasks) {
+                var task = this.tasks[taskId];
+                var statusColor = this._getStatusColor(task.status);
+                var statusIcon = this._getStatusIcon(task.status);
+                rows += '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; padding:4px; background:#202225; border-radius:4px;">';
+                rows += '<span style="color:#bdc3c7; font-size:11px;">' + task.label + '</span>';
+                rows += '<span style="color:' + statusColor + '; font-size:10px; font-weight:600;">' + statusIcon + ' ' + task.detail;
+                rows += '</span></div>';
+            }
+            rows += '</div></div>';
+
             return hdr + rows;
+        },
+
+        _getStatusColor: function(status) {
+            var colors = {
+                'idle': '#95a5a6',
+                'running': '#f39c12',
+                'done': '#2ecc71',
+                'error': '#e74c3c',
+                'skip': '#3498db',
+                'waiting': '#9b59b6'
+            };
+            return colors[status] || '#95a5a6';
+        },
+
+        _getStatusIcon: function(status) {
+            var icons = {
+                'idle': '⏸',
+                'running': '⚙',
+                'done': '✓',
+                'error': '✗',
+                'skip': '⊘',
+                'waiting': '⏳'
+            };
+            return icons[status] || '⏸';
         },
 
         _buildDataRow: function(label, value, valColor) {
@@ -250,7 +291,12 @@
         },
 
         set: function(id, status, detail) {
-            // Mapeia o status antigo para o novo motivo visual para manter compatibilidade
+            // Atualiza status operacional da tarefa específica
+            if (this.tasks[id]) {
+                this.tasks[id].status = status || 'idle';
+                this.tasks[id].detail = detail || '';
+            }
+            // Também atualiza o motivo geral para contexto
             if (detail) this.info.motivo = detail;
             this._rerender();
         }
