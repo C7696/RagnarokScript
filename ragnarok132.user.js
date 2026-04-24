@@ -1124,12 +1124,34 @@
      * Verifica se o botão de upgrade está disponível e clicável
      */
     function isButtonAvailable(buildingId, mainDoc) {
+        // Seletores genéricos para todos os edifícios
         var selectors = [
             '#building_' + buildingId + ' .upgrade-button:not(.disabled)',
             '#building_' + buildingId + ' .btn-upgrade:not(.disabled)',
             '#building_' + buildingId + ' a[href*="ajaxaction=upgrade"]:not(.disabled)',
-            '.building-' + buildingId + ' .upgrade-button:not(.disabled)'
+            '.building-' + buildingId + ' .upgrade-button:not(.disabled)',
+            '.building-' + buildingId + ' .btn-upgrade:not(.disabled)',
+            '#building_' + buildingId + ' button:not(.disabled)',
+            '.building-' + buildingId + ' button:not(.disabled)'
         ];
+        
+        // Seletores específicos para estátua (pode ter estrutura diferente)
+        if (buildingId === 'statue') {
+            selectors = selectors.concat([
+                '#statue .upgrade-button:not(.disabled)',
+                '#statue .btn-upgrade:not(.disabled)',
+                '#statue a[href*="ajaxaction=upgrade"]:not(.disabled)',
+                '#statue button:not(.disabled)',
+                '[data-building="statue"] .upgrade-button:not(.disabled)',
+                '[data-building="statue"] .btn-upgrade:not(.disabled)',
+                '[data-building="statue"] button:not(.disabled)',
+                '.statue-slot .upgrade-button:not(.disabled)',
+                '.statue-slot .btn-upgrade:not(.disabled)',
+                '.statue-slot button:not(.disabled)',
+                'a.btn-build[data-building="statue"]:not(.disabled)',
+                'button[data-building="statue"]:not(.disabled)'
+            ]);
+        }
         
         for (var sel of selectors) {
             var btn = mainDoc.querySelector(sel);
@@ -1140,10 +1162,51 @@
                                 btn.style.pointerEvents === 'none' ||
                                 btn.getAttribute('aria-disabled') === 'true';
                 if (!isDisabled) {
+                    log('[botão] ' + buildingId + ' botão encontrado: ' + sel, 'success');
                     return true;
+                } else {
+                    log('[botão] ' + buildingId + ' botão encontrado mas DESATIVADO: ' + sel, 'warning');
                 }
             }
         }
+        
+        // Debug extensivo para estátua
+        if (buildingId === 'statue') {
+            var allButtons = mainDoc.querySelectorAll('button, a.btn, .upgrade-button, .btn-upgrade, .btn-build');
+            log('[botão] Total de botões na página: ' + allButtons.length);
+            for (var i = 0; i < Math.min(10, allButtons.length); i++) {
+                var b = allButtons[i];
+                log('[botão] Botão ' + i + ': class=' + b.className + ' | href=' + (b.href || 'N/A') + ' | text=' + b.textContent.slice(0, 30).trim());
+            }
+            
+            // Verificar se há algum elemento com "statue" no ID ou classe
+            var statueElements = mainDoc.querySelectorAll('[id*="statue"], [class*="statue"], [data-building="statue"]');
+            log('[botão] Elementos com "statue": ' + statueElements.length);
+            for (var j = 0; j < Math.min(5, statueElements.length); j++) {
+                var el = statueElements[j];
+                log('[botão] Elemento ' + j + ': id=' + el.id + ' | class=' + el.className + ' | tagName=' + el.tagName);
+                // Verificar filhos deste elemento
+                var children = el.querySelectorAll('*');
+                log('[botão]   Filhos: ' + children.length);
+                for (var k = 0; k < Math.min(3, children.length); k++) {
+                    var child = children[k];
+                    log('[botão]     Filho ' + k + ': ' + child.tagName + ' class=' + child.className);
+                }
+            }
+            
+            // Verificar se existe slot da estátua vazio (indica que pode construir)
+            var emptyStatueSlots = mainDoc.querySelectorAll('.statue-slot-empty, .statue_empty, [data-statue-empty]');
+            if (emptyStatueSlots.length > 0) {
+                log('[botão] Slot vazio de estátua detectado! Pode construir.', 'success');
+            }
+            
+            // Verificar se estátua já está construída (não precisa de botão)
+            var builtStatue = mainDoc.querySelectorAll('.statue-built, .statue_level_1, .statue_level_2, [data-statue-level]');
+            if (builtStatue.length > 0) {
+                log('[botão] Estátua já construída detectada!', 'info');
+            }
+        }
+        
         return false;
     }
 
