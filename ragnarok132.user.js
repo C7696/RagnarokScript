@@ -385,7 +385,14 @@
             opts.headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
             opts.body = body;
         }
-        return win.fetch(url, opts).then(function (r) { return r.text(); });
+        log('[twFetch] ' + method + ' → ' + url.substring(0, 100) + (body ? ' | Body: ' + body.substring(0, 50) : ''), 'info');
+        return win.fetch(url, opts).then(function (r) {
+            log('[twFetch] Status: ' + r.status + ' ' + r.statusText, 'info');
+            return r.text();
+        }).catch(function(err) {
+            log('[twFetch] ERRO: ' + err.message, 'error');
+            throw err;
+        });
     }
 
     // ============================================================
@@ -1490,23 +1497,53 @@
             var rawData = typeof game_data !== 'undefined' ? game_data : {};
 
             // --- DETECÇÃO DE RUSH (Obras e Paladino) ---
+            log('[rush-detect] === INICIANDO DETECÇÃO DE RUSH ===', 'info');
             var rushCandidates = [];
-            mainDoc.querySelectorAll('#build_queue tr, .buildqueue_container tr').forEach(row => {
+            var buildQueueRows = mainDoc.querySelectorAll('#build_queue tr, .buildqueue_container tr');
+            log('[rush-detect] Encontradas ' + buildQueueRows.length + ' linhas na fila de construção', 'info');
+            
+            buildQueueRows.forEach((row, index) => {
                 var timerEl = row.querySelector('.timer');
-                if (!timerEl) return;
-                var secondsLeft = timeToSeconds(timerEl.textContent.trim());
+                if (!timerEl) {
+                    log('[rush-detect] Linha ' + index + ': Sem elemento .timer, pulando', 'info');
+                    return;
+                }
+                var timerText = timerEl.textContent.trim();
+                var secondsLeft = timeToSeconds(timerText);
+                log('[rush-detect] Linha ' + index + ': Timer="' + timerText + '" → ' + secondsLeft + ' segundos', 'info');
+                
                 if (secondsLeft < 185) {
-                    var idLink = row.querySelector('a[href*="id="]')?.getAttribute('href') || "";
+                    var idLink = row.querySelector('a[href*="id="')?.getAttribute('href') || "";
                     var m = idLink.match(/id=(\d+)/);
-                    if (m) rushCandidates.push(m[1]);
+                    if (m) {
+                        rushCandidates.push(m[1]);
+                        log('[rush-detect] Linha ' + index + ': ELEGÍVEL PARA RUSH! ID=' + m[1] + ' (' + secondsLeft + 's)', 'success');
+                    } else {
+                        log('[rush-detect] Linha ' + index + ': Não encontrou ID no link: ' + idLink, 'warning');
+                    }
+                } else {
+                    log('[rush-detect] Linha ' + index + ': ' + secondsLeft + 's >= 185s, não elegível para rush', 'info');
                 }
             });
+            
+            log('[rush-detect] Total de candidatos a rush: ' + rushCandidates.length, 'info');
+            if (rushCandidates.length > 0) {
+                log('[rush-detect] IDs elegíveis: [' + rushCandidates.join(', ') + ']', 'success');
+            }
 
             var knightRushId = null;
             if (statueInfo.isRecruiting) {
+                log('[rush-detect] Paladino em recrutamento detectado!', 'info');
                 // Tentar extrair ID do paladino em recrutamento
                 var mK = (statueInfo.htmlPura || "").match(/knight=(\d+)/) || (statueInfo.htmlPura || "").match(/data-knight=["'](\d+)/);
-                if (mK) knightRushId = mK[1];
+                if (mK) {
+                    knightRushId = mK[1];
+                    log('[rush-detect] Knight Rush ID encontrado: ' + knightRushId, 'success');
+                } else {
+                    log('[rush-detect] Não encontrou ID do paladino no HTML', 'warning');
+                }
+            } else {
+                log('[rush-detect] Paladino NÃO está em recrutamento', 'info');
             }
 
             // Estimar loot esperado baseado em recursos disponíveis para saque (simplificado)
@@ -1600,20 +1637,28 @@ function motorDeDecisaoMacro(state, villageId) {
         log('[motorDeDecisao] Perfil da aldeia: ' + memory.profile, 'info');
 
         // 1. RUSH GRÁTIS (Sempre primeiro)
+        log('[motorDeDecisao] Verificando rush de obras... rushIds.length=' + state.rushIds.length, 'info');
         if (state.rushIds.length > 0) {
+            log('[motorDeDecisao] ENCONTROU ' + state.rushIds.length + ' obras para rush! IDs: [' + state.rushIds.join(', ') + ']', 'success');
             state.rushIds.forEach(id => tasks.push({ id: 'build_rush', action: 'DO', orderId: id }));
             visHUD.acao = "RUSH OBRA"; visHUD.motivo = "Limpando fila.";
             HUD.set('build_general', 'running', 'Finalizando obras');
             HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
             return Promise.resolve(tasks);
+        } else {
+            log('[motorDeDecisao] Nenhuma obra elegível para rush no momento', 'info');
         }
 
+        log('[motorDeDecisao] Verificando rush de paladino... knightRushId=' + state.knightRushId, 'info');
         if (state.knightRushId) {
+            log('[motorDeDecisao] ENCONTROU paladino para rush! KnightID: ' + state.knightRushId, 'success');
             tasks.push({ id: 'knight_rush', action: 'DO', knightId: state.knightRushId });
             visHUD.acao = "RUSH PALADINO"; visHUD.motivo = "Finalizando herói!";
             HUD.set('knight', 'running', 'Recrutamento em rush');
             HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
             return Promise.resolve(tasks);
+        } else {
+            log('[motorDeDecisao] Nenhum paladino elegível para rush no momento', 'info');
         }
 
         // 2. BANDEIRA (Se não houver nenhuma ativa)
@@ -2352,14 +2397,50 @@ function motorDeDecisaoMacro(state, villageId) {
             ? unsafeWindow.game_data.csrf 
             : (game_data ? game_data.csrf : csrf);
 
+        log('[rush] === INICIANDO RUSH ===', 'info');
+        log('[rush] VillageID: ' + villageId, 'info');
+        log('[rush] OrderID: ' + orderId, 'info');
+        log('[rush] CSRF Ativo: ' + activeCsrf, 'info');
+        
         // Estrutura idêntica ao log capturado
         var url = window.location.origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=build_order_reduce&h=' + activeCsrf + '&id=' + orderId + '&destroy=0';
         
+        log('[rush] URL completa: ' + url, 'info');
         log('[rush] Disparando finalização instantânea para ID: ' + orderId, 'info');
+        
         return twFetch(url, 'GET').then(resp => {
-            log('[rush] Resposta do servidor recebida.', 'success');
-            return true;
-        }).catch(() => false);
+            log('[rush] Resposta bruta do servidor: ' + resp.substring(0, 200), 'info');
+            
+            try {
+                var json = JSON.parse(resp);
+                if (json.success) {
+                    log('[rush] SUCESSO! Construção ' + orderId + ' finalizada instantaneamente!', 'success');
+                    HUD.set('build_general', 'done', 'Rush completado!');
+                    return true;
+                } else if (json.error) {
+                    log('[rush] ERRO do servidor: ' + json.error, 'error');
+                    HUD.set('build_general', 'error', 'Rush falhou: ' + json.error);
+                    return false;
+                } else {
+                    log('[rush] Resposta JSON sem success/error: ' + JSON.stringify(json), 'warning');
+                    return false;
+                }
+            } catch (e) {
+                // Se não for JSON, verifica se a página retornou sucesso por texto
+                if (resp.indexOf('success') !== -1 || resp.indexOf('Construção finalizada') !== -1) {
+                    log('[rush] SUCESSO (texto)! Construção finalizada.', 'success');
+                    return true;
+                } else {
+                    log('[rush] Falha ao finalizar rush. Resposta não-JSON: ' + resp.substring(0, 100), 'error');
+                    HUD.set('build_general', 'error', 'Rush falhou (resposta inválida)');
+                    return false;
+                }
+            }
+        }).catch(function(err) {
+            log('[rush] ERRO DE REDE/EXCEPTION: ' + err.message, 'error');
+            HUD.set('build_general', 'error', 'Erro de rede no rush');
+            return false;
+        });
     }
     function runChecklist(villageId) {
         HUD.init();
