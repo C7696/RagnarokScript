@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tribal Wars - Smart Automation
 // @namespace    http://tampermonkey.net/
-// @version      5.1
-// @description  Checklist inteligente: bandeiras, estatua e paladino em segundo plano automaticamente
+// @version      6.0
+// @description  Motor de precisão com validação executável: recursos, botão, fila e confirmação real
 // @author       You
 // @match        *://*.tribalwars.com.br/*
 // @match        *://*.divoke-kmene.sk/*
@@ -888,6 +888,182 @@
         wall:       { barracks: 1 }
     };
 
+    // ============================================================
+    // CAMADA DE VALIDAÇÃO DE BUILD EXECUTÁVEL (V6.0)
+    // Verifica robustez: recursos, botão, fila, sucesso real
+    // ============================================================
+    
+    /**
+     * Extrai candidatos de construção diretamente do DOM
+     * Retorna lista de edifícios com botões disponíveis
+     */
+    function getBuildCandidatesFromDOM(mainDoc) {
+        var candidates = [];
+        // Buscar todos os edifícios na tela de main
+        mainDoc.querySelectorAll('.building-item, .lit-item, [id*="building_"]').forEach(el => {
+            var buildingId = el.id.replace('building_', '').replace('main_building_', '');
+            var upgradeBtn = el.querySelector('.upgrade-button, .btn-upgrade, a[href*="ajaxaction=upgrade"]');
+            if (upgradeBtn && buildingId) {
+                candidates.push({
+                    id: buildingId,
+                    element: el,
+                    button: upgradeBtn,
+                    hasButton: true
+                });
+            }
+        });
+        return candidates;
+    }
+
+    /**
+     * Extrai custos de um edifício específico do DOM ou usa tabela de custos
+     */
+    function extractCosts(buildingId, mainDoc, fallbackCosts) {
+        // Tentar extrair do tooltip ou elemento de custo no DOM
+        var costEl = mainDoc.querySelector('#building_' + buildingId + ' .costs, .building-' + buildingId + ' .costs');
+        if (costEl) {
+            var text = costEl.textContent || costEl.innerText;
+            var wood = parseInt(text.match(/(\d+)\s*madeira/i)?.[1] || text.match(/(\d+)\s*wood/i)?.[1] || '0');
+            var stone = parseInt(text.match(/(\d+)\s*pedra/i)?.[1] || text.match(/(\d+)\s*stone/i)?.[1] || '0');
+            var iron = parseInt(text.match(/(\d+)\s*ferro/i)?.[1] || text.match(/(\d+)\s*iron/i)?.[1] || '0');
+            if (wood > 0 || stone > 0 || iron > 0) {
+                return { wood: wood, stone: stone, iron: iron, fromDOM: true };
+            }
+        }
+        // Fallback: usar tabela de custos com progressão por nível
+        if (fallbackCosts) {
+            return { wood: fallbackCosts[0], stone: fallbackCosts[1], iron: fallbackCosts[2], time: fallbackCosts[3], fromDOM: false };
+        }
+        return null;
+    }
+
+    /**
+     * Verifica se há recursos suficientes AGORA para construir
+     */
+    function hasEnoughResources(buildingId, state, costs) {
+        if (!costs) return false;
+        var currentWood = state.recursos.wood || 0;
+        var currentStone = state.recursos.stone || 0;
+        var currentIron = state.recursos.iron || 0;
+        
+        var enough = (currentWood >= (costs.wood || 0)) &&
+                     (currentStone >= (costs.stone || 0)) &&
+                     (currentIron >= (costs.iron || 0));
+        
+        if (!enough) {
+            log('[executável] ' + buildingId + ' bloqueado: recursos insuficientes', 'warn');
+            log('  Necessário: W=' + (costs.wood||0) + ' S=' + (costs.stone||0) + ' I=' + (costs.iron||0));
+            log('  Disponível: W=' + Math.round(currentWood) + ' S=' + Math.round(currentStone) + ' I=' + Math.round(currentIron));
+        }
+        return enough;
+    }
+
+    /**
+     * Verifica se o botão de upgrade está disponível e clicável
+     */
+    function isButtonAvailable(buildingId, mainDoc) {
+        var selectors = [
+            '#building_' + buildingId + ' .upgrade-button:not(.disabled)',
+            '#building_' + buildingId + ' .btn-upgrade:not(.disabled)',
+            '#building_' + buildingId + ' a[href*="ajaxaction=upgrade"]:not(.disabled)',
+            '.building-' + buildingId + ' .upgrade-button:not(.disabled)'
+        ];
+        
+        for (var sel of selectors) {
+            var btn = mainDoc.querySelector(sel);
+            if (btn) {
+                // Verificar se não está em cooldown ou bloqueado por outra razão
+                var isDisabled = btn.classList.contains('disabled') || 
+                                btn.hasAttribute('disabled') ||
+                                btn.style.pointerEvents === 'none' ||
+                                btn.getAttribute('aria-disabled') === 'true';
+                if (!isDisabled) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Verifica se a construção entrou na fila após solicitação
+     * Usado para validar sucesso real da ação
+     */
+    function verifyQueuedAfterBuild(responseText, buildingId) {
+        try {
+            var json = JSON.parse(responseText);
+            // Verificar sucesso explícito
+            if (json.success === true || json.order_id) {
+                log('[verificação] ' + buildingId + ' entrou na fila com sucesso! OrderID: ' + (json.order_id || 'N/A'), 'success');
+                return true;
+            }
+            // Verificar mensagens de erro comuns
+            if (json.error) {
+                log('[verificação] Erro ao construir ' + buildingId + ': ' + json.error, 'error');
+                return false;
+            }
+        } catch (e) {
+            // Fallback: buscar indicadores textuais de sucesso
+            if (responseText.indexOf('success') !== -1 || 
+                responseText.indexOf('order_id') !== -1 ||
+                responseText.indexOf('queued') !== -1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Validação completa de build executável
+     * Combina todas as verificações: pré-requisitos, recursos, botão, fila
+     */
+    function isBuildExecutable(buildingId, state, mainDoc) {
+        // 1. Pré-requisitos básicos
+        if (!state.podeSerConstruido[buildingId]) {
+            log('[executável] ' + buildingId + ' bloqueado: pré-requisitos não atendidos', 'warn');
+            return false;
+        }
+
+        // 2. Verificar se botão está disponível no DOM
+        if (!isButtonAvailable(buildingId, mainDoc)) {
+            log('[executável] ' + buildingId + ' bloqueado: botão não disponível', 'warn');
+            return false;
+        }
+
+        // 3. Extrair custos (priorizar DOM, fallback tabela)
+        var baseCosts = TW_BUILDING_COSTS[buildingId];
+        var nivelAtual = parseInt(state.niveis[buildingId] || 0);
+        var costs = extractCosts(buildingId, mainDoc, baseCosts);
+        
+        if (!costs) {
+            log('[executável] ' + buildingId + ' bloqueado: não foi possível determinar custos', 'warn');
+            return false;
+        }
+
+        // Aplicar progressão de nível se veio da tabela
+        if (!costs.fromDOM && baseCosts) {
+            costs.wood = Math.floor(baseCosts[0] * Math.pow(1.5, nivelAtual));
+            costs.stone = Math.floor(baseCosts[1] * Math.pow(1.5, nivelAtual));
+            costs.iron = Math.floor(baseCosts[2] * Math.pow(1.5, nivelAtual));
+            costs.time = Math.floor(baseCosts[3] * Math.pow(1.1, nivelAtual));
+        }
+
+        // 4. Verificar recursos suficientes
+        if (!hasEnoughResources(buildingId, state, costs)) {
+            return false;
+        }
+
+        // 5. Verificar se há vaga na fila
+        var maxFila = state.premium.ativo ? 5 : 2;
+        if (state.filaBuilds >= maxFila) {
+            log('[executável] ' + buildingId + ' bloqueado: fila cheia (' + state.filaBuilds + '/' + maxFila + ')', 'warn');
+            return false;
+        }
+
+        log('[executável] ' + buildingId + ' VERIFICADO: pronto para construir!', 'success');
+        return true;
+    }
+
    function timeToSeconds(timeStr) {
         if (!timeStr) return 9999;
         var parts = timeStr.replace(/[^\d:]/g, '').split(':').map(Number);
@@ -959,7 +1135,10 @@
                 podeSerConstruido: {},
                 // Sistema proativo de previsão de overflow
                 lootEsperado: lootEstimadoSimples,      // Estimativa baseada em recursos (futuro: attacks em andamento)
-                rewardsEsperados: rewardsQuestsEstimado // Estimativa de rewards (futuro: integração quests)
+                rewardsEsperados: rewardsQuestsEstimado, // Estimativa de rewards (futuro: integração quests)
+                // Dados brutos do DOM para validação executável
+                _mainDoc: mainDoc,
+                _mainHtml: mainHtml
             };
 
             for (var ed in TW_BUILDING_REQS) {
@@ -967,6 +1146,10 @@
                 for (var nec in TW_BUILDING_REQS[ed]) { if (parseInt(state.niveis[nec]||0) < TW_BUILDING_REQS[ed][nec]) { travado = true; break; } }
                 state.podeSerConstruido[ed] = !travado;
             }
+            
+            // Extrair candidatos executáveis do DOM (validação robusta)
+            state.buildCandidatesDOM = getBuildCandidatesFromDOM(mainDoc);
+            
             return state;
         });
     }
@@ -1153,11 +1336,18 @@ function motorDeDecisaoMacro(state) {
             }
             // PRIORIDADE 3: Marcos estratégicos com análise de custo-benefício
             else if (activeMilestone) {
-                var candidatos = Object.keys(activeMilestone.reqs).filter(ed => 
-                    state.niveis[ed] !== undefined && 
-                    parseInt(state.niveis[ed]||0) < activeMilestone.reqs[ed] && 
-                    state.podeSerConstruido[ed]
-                );
+                // FILTRO DE CANDIDATOS EXECUTÁVEIS (validação robusta)
+                var candidatos = Object.keys(activeMilestone.reqs).filter(ed => {
+                    // Pré-requisitos básicos
+                    if (state.niveis[ed] === undefined) return false;
+                    if (parseInt(state.niveis[ed]||0) >= activeMilestone.reqs[ed]) return false;
+                    if (!state.podeSerConstruido[ed]) return false;
+                    
+                    // Validação executável completa (recursos, botão, fila)
+                    if (!isBuildExecutable(ed, state, state._mainDoc)) return false;
+                    
+                    return true;
+                });
                 
                 if (candidatos.length > 0) {
                     // Calcular score baseado em: custo real, retorno por tempo, peso estratégico
@@ -1247,11 +1437,15 @@ function motorDeDecisaoMacro(state) {
             }
             // PRIORIDADE 4: Otimização geral baseada em score quando não há milestone ativo
             else {
-                var todosCandidatos = Object.keys(TW_BUILDING_REQS).filter(ed =>
-                    state.podeSerConstruido[ed] &&
-                    ed !== 'snob' && // Snob só via milestone específico
-                    (state.niveis[ed] || 0) < 25 // Limite prático
-                );
+                // FILTRO DE CANDIDATOS EXECUTÁVEIS (validação robusta)
+                var todosCandidatos = Object.keys(TW_BUILDING_REQS).filter(ed => {
+                    if (!state.podeSerConstruido[ed]) return false;
+                    if (ed === 'snob') return false; // Snob só via milestone específico
+                    if ((state.niveis[ed] || 0) >= 25) return false; // Limite prático
+                    
+                    // Validação executável completa
+                    return isBuildExecutable(ed, state, state._mainDoc);
+                });
 
                 if (todosCandidatos.length > 0) {
                     var nivelHQ = parseInt(state.niveis['main'] || 0);
@@ -1330,10 +1524,14 @@ function motorDeDecisaoMacro(state) {
 
         log('[builder] Solicitando upgrade de ' + building + '...');
         return twFetch(buildUrl, 'POST', body).then(function (resp) {
-            try {
-                var json = JSON.parse(resp);
-                return !!(json.success || json.order_id);
-            } catch (e) { return resp.indexOf('success') !== -1; }
+            // Usar camada de verificação robusta
+            var success = verifyQueuedAfterBuild(resp, building);
+            if (success) {
+                log('[builder] ' + building + ' confirmado na fila!', 'success');
+            } else {
+                log('[builder] Falha ao confirmar ' + building + ' na fila', 'error');
+            }
+            return success;
         });
     }
 
@@ -1368,7 +1566,24 @@ function motorDeDecisaoMacro(state) {
 
                     if (task.id === 'build_rush') p = bgBuildRush(villageId, task.orderId, state.csrf);
                     else if (task.id === 'knight_rush') p = bgRushKnight(villageId, task.knightId, state.csrf); // EXECUTOR NOVO
-                    else if (task.id === 'build_general') p = bgBuildGeneric(villageId, task.target, state.csrf);
+                    else if (task.id === 'build_general') {
+                        // Validação final antes de executar: garantir que ainda é executável
+                        if (isBuildExecutable(task.target, state, state._mainDoc)) {
+                            p = bgBuildGeneric(villageId, task.target, state.csrf)
+                                .then(function(success) {
+                                    if (success) {
+                                        log('[executor] ' + task.target + ' iniciado com sucesso!', 'success');
+                                    } else {
+                                        log('[executor] Falha ao iniciar ' + task.target + ', bloqueando por 5min', 'error');
+                                        GM_setValue('build_blocked_' + task.target + '_' + villageId, Date.now() + 300000);
+                                    }
+                                    return success;
+                                });
+                        } else {
+                            log('[executor] ' + task.target + ' não é mais executável, pulando', 'warn');
+                            p = Promise.resolve(false);
+                        }
+                    }
                     else if (task.id === 'statue') p = bgBuildStatue(villageId, state.csrf);
                     else if (task.id === 'knight') p = bgRecruitKnight(villageId);
                     else if (task.id === 'flag') p = bgAssignFlagGhost(villageId, state.phase);
