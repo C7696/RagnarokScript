@@ -30,7 +30,7 @@
     // ============================================================
     var CONFIG = {
         debug: true,
-        groqApiKey: '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',
+        groqApiKey: null,  // Chave carregada via GM_getValue('groq_api_key') ou prompt
         groqModel: 'llama3-70b-8192',
         autoAssignFlag: true,
         autoRecruitKnight: true,
@@ -332,6 +332,23 @@
         GM_log(msg);
     }
 
+    // Carregar chave da API de forma segura
+    function loadApiKey() {
+        var storedKey = GM_getValue('groq_api_key', null);
+        if (storedKey && storedKey !== 'SUA_CHAVE_AQUI') {
+            CONFIG.groqApiKey = storedKey;
+            log('[segurança] Chave API carregada do armazenamento seguro', 'success');
+            return true;
+        }
+        log('[segurança] Chave API não configurada. Use GM_setValue("groq_api_key", "sua_chave") no console do Tampermonkey', 'warning');
+        return false;
+    }
+
+    // Validar se a chave está configurada
+    function isApiKeyConfigured() {
+        return CONFIG.groqApiKey && CONFIG.groqApiKey !== null && CONFIG.groqApiKey !== 'SUA_CHAVE_AQUI' && CONFIG.groqApiKey.length > 10;
+    }
+
     function getScreenParam() { return new URL(window.location.href).searchParams.get('screen') || ''; }
     function getVillageIdParam() { return new URL(window.location.href).searchParams.get('village') || ''; }
     function getVillagePoints() {
@@ -387,7 +404,11 @@
 
     function gmGroq(prompt) {
         return new Promise(function (resolve) {
-            if (!CONFIG.groqApiKey || CONFIG.groqApiKey === 'SUA_CHAVE_AQUI') { resolve(null); return; }
+            if (!isApiKeyConfigured()) { 
+                log('[groq] API key não configurada', 'warning');
+                resolve(null); 
+                return; 
+            }
             GM_xmlhttpRequest({
                 method: 'POST',
                 url: 'https://api.groq.com/openai/v1/chat/completions',
@@ -2294,7 +2315,25 @@ function motorDeDecisaoMacro(state, villageId) {
         // API para forçar refresh das aldeias
         refreshVillages: function() {
             return VillageManager.refreshVillages();
+        },
+        // API para configurar chave da API de forma segura
+        setApiKey: function(apiKey) {
+            if (apiKey && apiKey.length > 10) {
+                GM_setValue('groq_api_key', apiKey);
+                CONFIG.groqApiKey = apiKey;
+                log('[segurança] Chave API configurada com sucesso', 'success');
+                return true;
+            }
+            log('[segurança] Chave API inválida', 'error');
+            return false;
+        },
+        // API para verificar status da chave
+        checkApiKey: function() {
+            return isApiKeyConfigured();
         }
     };
+
+    // Inicializar carregamento seguro da chave API
+    loadApiKey();
 
 })();
