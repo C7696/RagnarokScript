@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tribal Wars - Smart Automation
 // @namespace    http://tampermonkey.net/
-// @version      8.0
-// @description  Gerenciador multi-village com perfis, score de urgência e priorização global
+// @version      9.0
+// @description  Gerenciador multi-village com perfis, score de urgência e priorização global - SEM IA OPERACIONAL
 // @author       You
 // @match        *://*.tribalwars.com.br/*
 // @match        *://*.divoke-kmene.sk/*
@@ -17,7 +17,6 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_log
-// @connect      api.groq.com
 // @connect      *
 // @run-at       document-idle
 // ==/UserScript==
@@ -27,16 +26,14 @@
 
    // ============================================================
     // CONFIG - VERSÃO TURBO (LOOP CONTÍNUO & RUSH GRÁTIS)
+    // SEM IA PARA DECISÕES OPERACIONAIS
     // ============================================================
     var CONFIG = {
         debug: true,
-        groqApiKey: null,  // Chave carregada via GM_getValue('groq_api_key') ou prompt
-        groqModel: 'llama3-70b-8192',
         autoAssignFlag: true,
         autoRecruitKnight: true,
         autoBuildStatue: true,
         autoRushStatue: true,    // Finaliza estátua com ouro se disponível
-        useGroqChecklist: true,
         checklistDelay: 2000,    // Delay inicial reduzido para 2s
 
         // --- NOVAS CONFIGURAÇÕES DE PERFORMANCE ---
@@ -332,23 +329,6 @@
         GM_log(msg);
     }
 
-    // Carregar chave da API de forma segura
-    function loadApiKey() {
-        var storedKey = GM_getValue('groq_api_key', null);
-        if (storedKey && storedKey !== 'SUA_CHAVE_AQUI') {
-            CONFIG.groqApiKey = storedKey;
-            log('[segurança] Chave API carregada do armazenamento seguro', 'success');
-            return true;
-        }
-        log('[segurança] Chave API não configurada. Use GM_setValue("groq_api_key", "sua_chave") no console do Tampermonkey', 'warning');
-        return false;
-    }
-
-    // Validar se a chave está configurada
-    function isApiKeyConfigured() {
-        return CONFIG.groqApiKey && CONFIG.groqApiKey !== null && CONFIG.groqApiKey !== 'SUA_CHAVE_AQUI' && CONFIG.groqApiKey.length > 10;
-    }
-
     function getScreenParam() { return new URL(window.location.href).searchParams.get('screen') || ''; }
     function getVillageIdParam() { return new URL(window.location.href).searchParams.get('village') || ''; }
     function getVillagePoints() {
@@ -360,7 +340,8 @@
     }
 
     // ============================================================
-    // HTTP
+    // HTTP - APENAS PARA OPERAÇÕES LOCAIS DO JOGO
+    // SEM CHAMADAS EXTERNAS PARA IA
     // ============================================================
     function gmGet(url) {
         return new Promise(function (resolve, reject) {
@@ -400,36 +381,6 @@
             opts.body = body;
         }
         return win.fetch(url, opts).then(function (r) { return r.text(); });
-    }
-
-    function gmGroq(prompt) {
-        return new Promise(function (resolve) {
-            if (!isApiKeyConfigured()) { 
-                log('[groq] API key não configurada', 'warning');
-                resolve(null); 
-                return; 
-            }
-            GM_xmlhttpRequest({
-                method: 'POST',
-                url: 'https://api.groq.com/openai/v1/chat/completions',
-                headers: { Authorization: 'Bearer ' + CONFIG.groqApiKey, 'Content-Type': 'application/json' },
-                data: JSON.stringify({
-                    messages: [
-                        { role: 'system', content: 'You are a Tribal Wars automation AI. Return ONLY valid JSON, no markdown, no explanation.' },
-                        { role: 'user', content: prompt },
-                    ],
-                    model: CONFIG.groqModel,
-                    temperature: 0.0,
-                }),
-                onload: function (r) {
-                    try {
-                        var json = JSON.parse(r.responseText);
-                        resolve(json.choices && json.choices[0] ? json.choices[0].message.content.trim() : null);
-                    } catch (e) { resolve(null); }
-                },
-                onerror: function () { resolve(null); },
-            });
-        });
     }
 
     // ============================================================
@@ -1988,17 +1939,38 @@ function motorDeDecisaoMacro(state, villageId) {
             .catch(function (e) { log('Falha DOM flag: ' + e.message, 'error'); });
     }
 
-    function selectBestFlagGroq(flags, points, phase) {
-        var payload = flags.map(function (f) { return { id: f.type + '_' + f.level, cat: f.category, name: f.name, level: f.level, qty: f.count }; });
-        var prompt = 'Pick the BEST flag. Phase: ' + phase + ' (' + points + ' pts). Flags: ' + JSON.stringify(payload)
-            + '. Reply ONLY with id like "3_4".';
-        return gmGroq(prompt).then(function (content) {
-            if (!content) return null;
-            var m = content.match(/(\d+)_(\d+)/);
-            if (!m) return null;
-            var t = parseInt(m[1]), l = parseInt(m[2]);
-            return flags.find(function (f) { return f.type === t && f.level === l; }) || null;
+    // ============================================================
+    // SELEÇÃO DE BANDEIRA - APENAS REGRA LOCAL (SEM IA)
+    // Decisão baseada em thresholds e score auditável
+    // ============================================================
+    function selectBestFlagLocal(flags, phase) {
+        if (!flags || !flags.length) return null;
+        
+        // Pesos por categoria e fase do jogo
+        var weights = {
+            EARLY:  { resource: 100, population: 80, recruitment: 60, attack: 50, defense: 40, loot: 30, luck: 20, coin: 10 },
+            MID:    { attack: 100, loot: 90, recruitment: 80, resource: 70, population: 60, defense: 50, luck: 40, coin: 30 },
+            LATE:   { attack: 100, loot: 95, coin: 80, recruitment: 70, resource: 60, population: 50, defense: 40, luck: 30 }
+        };
+        
+        var w = weights[phase] || weights.EARLY;
+        
+        // Calcular score para cada bandeira
+        var scored = flags.map(function(f) {
+            var baseScore = w[f.category] || 0;
+            var levelBonus = f.level * 3;
+            var quantityBonus = (f.count || 0) > 1 ? 10 : 0;
+            return {
+                flag: f,
+                score: baseScore + levelBonus + quantityBonus
+            };
         });
+        
+        // Ordenar por score e retornar a melhor
+        scored.sort(function(a, b) { return b.score - a.score; });
+        
+        log('[bandeira] Selecionada: ' + scored[0].flag.name + ' (score: ' + scored[0].score + ')', 'info');
+        return scored[0].flag;
     }
 
     function runFlagsMode() {
@@ -2010,15 +1982,14 @@ function motorDeDecisaoMacro(state, villageId) {
         var alreadyAssigned = isCurrentFlagAssigned();
         if (alreadyAssigned) { log('Bandeira ja atribuida.'); return; }
 
-        selectBestFlagGroq(flags, points, phase).then(function (best) {
-            if (!best) best = selectBestFlagLocal(flags, phase);
-            if (!best) return;
-            highlightBestFlag(best.element);
-            if (CONFIG.autoAssignFlag) {
-                HUD.set('flag', 'running', 'DOM: ' + best.name + ' Nv.' + best.level);
-                setTimeout(function () { assignFlag(best.element); }, 1500);
-            }
-        });
+        // Seleção 100% local, sem IA
+        var best = selectBestFlagLocal(flags, phase);
+        if (!best) return;
+        highlightBestFlag(best.element);
+        if (CONFIG.autoAssignFlag) {
+            HUD.set('flag', 'running', 'DOM: ' + best.name + ' Nv.' + best.level);
+            setTimeout(function () { assignFlag(best.element); }, 1500);
+        }
     }
 
     // --- Estatua (tela main) ---
@@ -2315,25 +2286,7 @@ function motorDeDecisaoMacro(state, villageId) {
         // API para forçar refresh das aldeias
         refreshVillages: function() {
             return VillageManager.refreshVillages();
-        },
-        // API para configurar chave da API de forma segura
-        setApiKey: function(apiKey) {
-            if (apiKey && apiKey.length > 10) {
-                GM_setValue('groq_api_key', apiKey);
-                CONFIG.groqApiKey = apiKey;
-                log('[segurança] Chave API configurada com sucesso', 'success');
-                return true;
-            }
-            log('[segurança] Chave API inválida', 'error');
-            return false;
-        },
-        // API para verificar status da chave
-        checkApiKey: function() {
-            return isApiKeyConfigured();
         }
     };
-
-    // Inicializar carregamento seguro da chave API
-    loadApiKey();
 
 })();
