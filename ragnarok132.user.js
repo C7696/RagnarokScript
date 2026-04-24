@@ -2091,7 +2091,7 @@ function motorDeDecisaoMacro(state, villageId) {
     }
 
     // ============================================================================
-    // FUNÇÃO DE CONSTRUÇÃO ASSÍNCRONA - NOVA ABORDAGEM
+    // FUNÇÃO DE CONSTRUÇÃO ASSÍNCRONA - NOVA ABORDAGEM (FUNCIONA EM SEGUNDO PLANO)
     // ============================================================================
     async function tentarConstruirEdificio(nomeEdificio) {
         console.log(`[TWBot] 🏗️ Iniciando processo de construção para: ${nomeEdificio}`);
@@ -2122,61 +2122,123 @@ function motorDeDecisaoMacro(state, villageId) {
             console.warn('[TWBot] Erro ao obter village_id, tentando continuar...');
         }
         
+        // Se não conseguiu obter village_id, tenta usar o estado coletado
+        if (!villageId) {
+            console.warn('[TWBot] Não foi possível obter village_id, verificando se temos estado...');
+            // Em segundo plano, podemos não ter acesso ao DOM, então vamos direto para a requisição
+        }
+        
         var mainDoc = document; // Usar o documento atual
         
         // 1. Verificar se botão está disponível no DOM (validação rápida)
-        if (!isButtonAvailable(nomeEdificio, mainDoc)) {
+        // SE estiver em segundo plano e o DOM não estiver acessível, pula esta verificação
+        var buttonAvailable = false;
+        try {
+            buttonAvailable = isButtonAvailable(nomeEdificio, mainDoc);
+        } catch (e) {
+            console.log(`[TWBot] ⚠️ DOM não acessível (segundo plano), pulando verificação visual...`);
+            buttonAvailable = true; // Assume que está disponível e tenta a requisição
+        }
+        
+        if (!buttonAvailable) {
             console.log(`[TWBot] ⚠️ ${nomeEdificio} botão não disponível (fila cheia, nível máximo ou sem recursos)`);
             return false;
         }
 
         // 2. Extrair recursos atuais do DOM (código inline baseado em collectVillageState)
+        // SE estiver em segundo plano, usa os dados do estado coletado anteriormente
         var woodFromDOM = 0, stoneFromDOM = 0, ironFromDOM = 0;
-        var woodEl = mainDoc.querySelector('#resource_span .wood, .res .wood, #resources .wood');
-        var stoneEl = mainDoc.querySelector('#resource_span .stone, .res .stone, #resources .stone');
-        var ironEl = mainDoc.querySelector('#resource_span .iron, .res .iron, #resources .iron');
+        var recursosDisponiveis = false;
         
-        if (woodEl) {
-            var woodText = woodEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
-            woodFromDOM = parseInt(woodText) || 0;
-        }
-        if (stoneEl) {
-            var stoneText = stoneEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
-            stoneFromDOM = parseInt(stoneText) || 0;
-        }
-        if (ironEl) {
-            var ironText = ironEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
-            ironFromDOM = parseInt(ironText) || 0;
+        try {
+            var woodEl = mainDoc.querySelector('#resource_span .wood, .res .wood, #resources .wood');
+            var stoneEl = mainDoc.querySelector('#resource_span .stone, .res .stone, #resources .stone');
+            var ironEl = mainDoc.querySelector('#resource_span .iron, .res .iron, #resources .iron');
+            
+            if (woodEl) {
+                var woodText = woodEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
+                woodFromDOM = parseInt(woodText) || 0;
+                recursosDisponiveis = true;
+            }
+            if (stoneEl) {
+                var stoneText = stoneEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
+                stoneFromDOM = parseInt(stoneText) || 0;
+            }
+            if (ironEl) {
+                var ironText = ironEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
+                ironFromDOM = parseInt(ironText) || 0;
+            }
+        } catch (e) {
+            console.log(`[TWBot] ⚠️ Não foi possível ler recursos do DOM (segundo plano)`);
+            recursosDisponiveis = false;
         }
         
         var recursosDOM = { wood: woodFromDOM, stone: stoneFromDOM, iron: ironFromDOM };
         
-        // Obter nível atual do edifício
+        // Obter nível atual do edifício (se DOM disponível)
         var nivelAtual = 0;
-        var buildingRow = mainDoc.querySelector('#building_' + nomeEdificio);
-        if (buildingRow) {
-            var levelMatch = buildingRow.className.match(/level_(\d+)/);
-            if (levelMatch) {
-                nivelAtual = parseInt(levelMatch[1]);
+        try {
+            var buildingRow = mainDoc.querySelector('#building_' + nomeEdificio);
+            if (buildingRow) {
+                var levelMatch = buildingRow.className.match(/level_(\d+)/);
+                if (levelMatch) {
+                    nivelAtual = parseInt(levelMatch[1]);
+                }
             }
+        } catch (e) {
+            console.log(`[TWBot] ⚠️ Não foi possível obter nível do edifício (segundo plano)`);
         }
         
-        var custosBase = TW_BUILDING_COSTS[nomeEdificio];
-        
-        if (custosBase && recursosDOM.wood > 0) {
-            var custoMadeira = Math.floor(custosBase[0] * Math.pow(1.5, nivelAtual));
-            var custoPedra = Math.floor(custosBase[1] * Math.pow(1.5, nivelAtual));
-            var custoFerro = Math.floor(custosBase[2] * Math.pow(1.5, nivelAtual));
+        // Verificar recursos apenas se conseguimos ler do DOM
+        if (recursosDisponiveis && recursosDOM.wood > 0) {
+            var custosBase = TW_BUILDING_COSTS[nomeEdificio];
             
-            if (recursosDOM.wood < custoMadeira || recursosDOM.stone < custoPedra || recursosDOM.iron < custoFerro) {
-                console.log(`[TWBot] ⚠️ ${nomeEdificio} sem recursos suficientes. Necessário: W=${custoMadeira}, S=${custoPedra}, I=${custoFerro}`);
-                return false;
+            if (custosBase) {
+                var custoMadeira = Math.floor(custosBase[0] * Math.pow(1.5, nivelAtual));
+                var custoPedra = Math.floor(custosBase[1] * Math.pow(1.5, nivelAtual));
+                var custoFerro = Math.floor(custosBase[2] * Math.pow(1.5, nivelAtual));
+                
+                if (recursosDOM.wood < custoMadeira || recursosDOM.stone < custoPedra || recursosDOM.iron < custoFerro) {
+                    console.log(`[TWBot] ⚠️ ${nomeEdificio} sem recursos suficientes. Necessário: W=${custoMadeira}, S=${custoPedra}, I=${custoFerro}`);
+                    return false;
+                }
             }
         }
 
         // 3. A MÁGICA ACONTECE AQUI:
-        // Em vez de verificar o botão manualmente, chamamos a função robusta
-        const sucesso = await clicarBotaoConstruir(nomeEdificio);
+        // Tenta primeiro clicar no botão (se DOM disponível), senão faz requisição direta
+        var sucesso = false;
+        
+        // Tenta encontrar e clicar o botão (funciona apenas se a página estiver carregada)
+        try {
+            sucesso = await clicarBotaoConstruir(nomeEdificio);
+        } catch (e) {
+            console.log(`[TWBot] ⚠️ Não foi possível clicar no botão via DOM, usando fallback AJAX...`);
+            sucesso = false;
+        }
+        
+        // Se não conseguiu clicar (segundo plano), faz requisição AJAX direta
+        if (!sucesso && villageId) {
+            console.log(`[TWBot] 🔄 Usando método de requisição direta para ${nomeEdificio}...`);
+            
+            // Obter CSRF do estado global ou do game_data
+            var csrf = null;
+            try {
+                if (typeof game_data !== 'undefined' && game_data.csrf) {
+                    csrf = game_data.csrf;
+                } else if (window.TWBot && window.TWBot.state && window.TWBot.state[villageId]) {
+                    csrf = window.TWBot.state[villageId].csrf;
+                }
+            } catch (e) {}
+            
+            if (!csrf) {
+                console.error(`[TWBot] ❌ CSRF não disponível, não é possível construir ${nomeEdificio}`);
+                return false;
+            }
+            
+            // Fazer requisição direta usando bgBuildGeneric
+            sucesso = await bgBuildGeneric(villageId, nomeEdificio, csrf);
+        }
 
         if (sucesso) {
             console.log(`[TWBot] ✅ Construção de ${nomeEdificio} iniciada com sucesso!`);
@@ -2187,8 +2249,8 @@ function motorDeDecisaoMacro(state, villageId) {
         }
     }
 
-    // Função bgBuildGeneric mantida para compatibilidade (não utilizada na nova abordagem)
-    function bgBuildGeneric(villageId, building, csrf) {
+    // Função bgBuildGeneric atualizada para ser assíncrona (usada como fallback em segundo plano)
+    async function bgBuildGeneric(villageId, building, csrf) {
         var origin = window.location.origin;
         // URL correta para upgrade de edifícios no Tribal Wars
         var buildUrl = origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=upgrade_building&type=' + building;
@@ -2196,23 +2258,25 @@ function motorDeDecisaoMacro(state, villageId) {
 
         log('[builder] Solicitando upgrade de ' + building + '...', 'info');
         
-        return twFetch(buildUrl, 'POST', body).then(function (resp) {
+        try {
+            var resp = await twFetch(buildUrl, 'POST', body);
             // Usar camada de verificação robusta
             var success = verifyQueuedAfterBuild(resp, building);
             if (success) {
                 log('[builder] ' + building + ' confirmado na fila!', 'success');
                 // Pequeno delay para o servidor processar antes da próxima ação
-                return new Promise(resolve => setTimeout(() => resolve(true), 500));
+                await new Promise(resolve => setTimeout(resolve, 500));
+                return true;
             } else {
                 log('[builder] Falha ao confirmar ' + building + ' na fila', 'error');
                 // Log da resposta completa para debug
                 log('[builder] Resposta recebida: ' + resp.substring(0, 200), 'warning');
+                return false;
             }
-            return success;
-        }).catch(function(err) {
+        } catch(err) {
             log('[builder] Erro na requisição de ' + building + ': ' + err, 'error');
             return false;
-        });
+        }
     }
 
    // ============================================================
