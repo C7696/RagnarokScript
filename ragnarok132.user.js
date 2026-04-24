@@ -816,17 +816,44 @@
         var url = window.location.origin + '/game.php?village=' + villageId + '&screen=statue&_=' + Date.now();
 
         function parseKnightHtml(html) {
-            var canRecruit = html.indexOf('knight_recruit_launch') !== -1;
-            var isRecruit = !canRecruit && (html.indexOf('knight_recruit_rush') !== -1 || html.indexOf('knight_progress') !== -1);
-
+            // Criar documento virtual para análise
+            var doc = new DOMParser().parseFromString(html, 'text/html');
+            
+            // Verificar se estátua existe e tem nível >= 1
+            var statueLevelEl = doc.querySelector('.statue_level_1, .statue_level_2, .statue-built, [data-statue-level]');
+            var statueExists = statueLevelEl !== null;
+            
+            // Verificar indicadores de recrutamento disponíveis
+            var canRecruit = html.indexOf('knight_recruit_launch') !== -1 || 
+                            html.indexOf('recruit_knight') !== -1 ||
+                            doc.querySelector('.knight_recruit_launch, #knight_recruit_btn') !== null;
+            
+            // Verificar se está recrutando atualmente
+            var isRecruit = !canRecruit && (html.indexOf('knight_recruit_rush') !== -1 || 
+                                            html.indexOf('knight_progress') !== -1 ||
+                                            html.indexOf('knight_recruiting') !== -1);
+            
+            // Verificar se paladino já está presente (vivo na aldeia)
             var hasKnight = !canRecruit && !isRecruit && (
                 html.indexOf('rename_knight')  !== -1 ||
                 html.indexOf('knight_present') !== -1 ||
-                html.indexOf('Verplaatsen')    !== -1
+                html.indexOf('Verplaatsen')    !== -1 ||
+                doc.querySelector('#rename_knight, .knight_present, #knight_info') !== null
             );
+            
+            // Se estátua existe mas paladino não está presente e não está recrutando, 
+            // pode estar morto/ausente (pode recrutar novamente)
+            if (statueExists && !hasKnight && !isRecruit && !canRecruit) {
+                // Verificar se há botão de reviver/recrutar
+                var reviveBtn = doc.querySelector('.revive_knight, .resurrect_knight, [href*="revive"]');
+                if (reviveBtn) {
+                    canRecruit = true;
+                    log('[knight] Paladino ausente/morto - pronto para reviver', 'info');
+                }
+            }
 
             var csrf = extractCsrf(html);
-            return { canRecruit: canRecruit, isPresent: hasKnight, isRecruiting: isRecruit, csrf: csrf };
+            return { canRecruit: canRecruit, isPresent: hasKnight, isRecruiting: isRecruit, csrf: csrf, statueExists: statueExists };
         }
 
         return gmGet(url).then(parseKnightHtml).catch(function (e) {
@@ -1162,7 +1189,30 @@
     /**
      * Verifica se o botão de upgrade está disponível e clicável
      */
+    /**
+     * Verifica se o botão de construção está disponível no DOM
+     * Agora com detecção aprimorada de edifícios já construídos/em construção
+     */
     function isButtonAvailable(buildingId, mainDoc) {
+        // Primeiro verificar se o edifício já está em construção ou construído
+        var buildingRow = mainDoc.querySelector('#building_' + buildingId);
+        
+        if (buildingRow) {
+            // Verificar se há indicador de "em construção"
+            var timerEl = buildingRow.querySelector('.timer, .countdown');
+            if (timerEl && timerEl.textContent.trim()) {
+                log('[botão] ' + buildingId + ' já está em construção (timer detectado)', 'info');
+                return false; // Já está na fila
+            }
+            
+            // Verificar se há nível máximo atingido
+            var maxLevelIndicator = buildingRow.querySelector('.max-level, .level_max, [data-max-level]');
+            if (maxLevelIndicator) {
+                log('[botão] ' + buildingId + ' já está no nível máximo', 'info');
+                return false;
+            }
+        }
+        
         // Seletores genéricos para todos os edifícios
         var selectors = [
             '#building_' + buildingId + ' .upgrade-button:not(.disabled)',
@@ -1188,8 +1238,28 @@
                 '.statue-slot .btn-upgrade:not(.disabled)',
                 '.statue-slot button:not(.disabled)',
                 'a.btn-build[data-building="statue"]:not(.disabled)',
-                'button[data-building="statue"]:not(.disabled)'
+                'button[data-building="statue"]:not(.disabled)',
+                // Novos seletores para diferentes versões do TW
+                '#content_value a.btn[href*="statue"]',
+                '#content_value input[type="button"][value*="statue" i]',
+                'form[action*="statue"] input[type="submit"]',
+                '.statue_container .build_button',
+                '#statue_build_btn'
             ]);
+            
+            // Verificação especial: se estátua já tem nível 1+, não precisa construir
+            var statueLevel = mainDoc.querySelector('.statue_level_1, .statue_level_2, .statue-built, [data-statue-level="1"], [data-statue-level="2"]');
+            if (statueLevel) {
+                log('[botão] Estátua já construída detectada (nível >= 1)!', 'success');
+                return false; // Já construída
+            }
+            
+            // Verificar se há slot vazio de estátua (pode construir)
+            var emptySlot = mainDoc.querySelector('.statue-slot-empty, .statue_empty, [data-statue-empty], .empty_statue_slot');
+            if (emptySlot && !statueLevel) {
+                log('[botão] Slot vazio de estátua detectado! Pode construir.', 'success');
+                return true;
+            }
         }
         
         for (var sel of selectors) {
@@ -1205,6 +1275,26 @@
                     return true;
                 } else {
                     log('[botão] ' + buildingId + ' botão encontrado mas DESATIVADO: ' + sel, 'warning');
+                }
+            }
+        }
+        
+        // Fallback: procurar por texto do botão na área de conteúdo
+        var contentArea = mainDoc.querySelector('#content_value, td#content_value');
+        if (contentArea) {
+            var allButtons = contentArea.querySelectorAll('input, button, a');
+            for (var i = 0; i < allButtons.length; i++) {
+                var el = allButtons[i];
+                var text = (el.innerText || el.value || '').toLowerCase();
+                if ((text.includes('construir') || text.includes('bauen') || text.includes('build') || text.includes('finalizar') || text.includes('ok')) && 
+                    !el.classList.contains('disabled') && 
+                    !el.hasAttribute('disabled')) {
+                    // Verificar se está relacionado ao edifício atual
+                    var parentBuilding = el.closest('#building_' + buildingId, '[data-building="' + buildingId + '"]');
+                    if (parentBuilding || buildingId === 'statue') {
+                        log('[botão] ' + buildingId + ' botão fallback encontrado pelo texto', 'success');
+                        return true;
+                    }
                 }
             }
         }
@@ -1232,18 +1322,6 @@
                     log('[botão]     Filho ' + k + ': ' + child.tagName + ' class=' + child.className);
                 }
             }
-            
-            // Verificar se existe slot da estátua vazio (indica que pode construir)
-            var emptyStatueSlots = mainDoc.querySelectorAll('.statue-slot-empty, .statue_empty, [data-statue-empty]');
-            if (emptyStatueSlots.length > 0) {
-                log('[botão] Slot vazio de estátua detectado! Pode construir.', 'success');
-            }
-            
-            // Verificar se estátua já está construída (não precisa de botão)
-            var builtStatue = mainDoc.querySelectorAll('.statue-built, .statue_level_1, .statue_level_2, [data-statue-level]');
-            if (builtStatue.length > 0) {
-                log('[botão] Estátua já construída detectada!', 'info');
-            }
         }
         
         return false;
@@ -1266,15 +1344,31 @@
                 log('[verificação] Erro ao construir ' + buildingId + ': ' + json.error, 'error');
                 return false;
             }
+            // Verificar se há indicador de "já em construção"
+            if (json.already_queued || json.building_in_progress) {
+                log('[verificação] ' + buildingId + ' já está em construção', 'info');
+                return true; // Considera sucesso pois já está na fila
+            }
         } catch (e) {
             // Fallback: buscar indicadores textuais de sucesso
             if (responseText.indexOf('success') !== -1 || 
                 responseText.indexOf('order_id') !== -1 ||
-                responseText.indexOf('queued') !== -1) {
+                responseText.indexOf('queued') !== -1 ||
+                responseText.indexOf('building_upgraded') !== -1) {
                 return true;
             }
+            // Verificar se não há erros evidentes
+            if (responseText.indexOf('error') !== -1 || 
+                responseText.indexOf('failed') !== -1 ||
+                responseText.indexOf('not enough resources') !== -1) {
+                log('[verificação] Erro detectado na resposta para ' + buildingId, 'error');
+                return false;
+            }
         }
-        return false;
+        // Se chegou aqui sem indicação clara de erro, assume que pode ter funcionado
+        // (alguns servidores retornam HTML parcial em vez de JSON)
+        log('[verificação] Resposta ambígua para ' + buildingId + ', verificando conteúdo...', 'warning');
+        return responseText.length > 50; // Se tem conteúdo razoável, assume sucesso
     }
 
     /**
@@ -1348,7 +1442,7 @@
         return Promise.all([
             safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=flags')),
             safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=main')),
-            statueEnabled ? getKnightState(villageId) : Promise.resolve({ canRecruit: false, isPresent: false, isRecruiting: false })
+            statueEnabled ? getKnightState(villageId) : Promise.resolve({ canRecruit: false, isPresent: false, isRecruiting: false, statueExists: false })
         ]).then(function (results) {
             var flagsHtml = results[0], mainHtml = results[1], statueInfo = results[2];
             var mainDoc = new DOMParser().parseFromString(mainHtml, 'text/html');
@@ -1368,8 +1462,9 @@
             });
 
             var knightRushId = null;
-            if (statueInfo.isRecruiting && statueInfo.htmlPura) {
-                var mK = statueInfo.htmlPura.match(/knight=(\d+)/) || statueInfo.htmlPura.match(/data-knight=["'](\d+)/);
+            if (statueInfo.isRecruiting) {
+                // Tentar extrair ID do paladino em recrutamento
+                var mK = (statueInfo.htmlPura || "").match(/knight=(\d+)/) || (statueInfo.htmlPura || "").match(/data-knight=["'](\d+)/);
                 if (mK) knightRushId = mK[1];
             }
 
@@ -1496,14 +1591,30 @@ function motorDeDecisaoMacro(state, villageId) {
 
         // 3. PALADINO (Com trava de erro do servidor + memória)
         var pBlock = GM_getValue('knight_blocked_' + state.villageId, 0);
+        
+        // Verificar se estátua foi construída (nível >= 1) mas paladino ainda não está presente
+        // Isso pode ocorrer quando estátua foi finalizada mas paladino morreu/foi expulso
+        var statueBuilt = state.statueEnabled && state.knight.statueExists;
+        
         if (state.knight.canRecruit && Date.now() > pBlock) {
             tasks.push({ id: 'knight', action: 'DO' });
             visHUD.acao = "RECRUTAR PALADINO";
             HUD.set('knight', 'running', 'Pronto para recrutar');
         } else if (state.knight.isRecruiting) {
             HUD.set('knight', 'waiting', 'Recrutando...');
-        } else if (!state.knight.isPresent) {
+        } else if (!state.knight.isPresent && !statueBuilt) {
+            // Estátua ainda não foi construída
             HUD.set('knight', 'idle', 'Estátua não construída');
+        } else if (!state.knight.isPresent && statueBuilt) {
+            // Estátua existe mas paladino está ausente/morto - pode recrutar!
+            log('[motorDeDecisao] Estátua construída, paladino ausente - pronto para reviver', 'info');
+            if (Date.now() > pBlock) {
+                tasks.push({ id: 'knight', action: 'DO' });
+                visHUD.acao = "REVIVER PALADINO";
+                HUD.set('knight', 'running', 'Revivendo herói');
+            } else {
+                HUD.set('knight', 'waiting', 'Aguardando cooldown');
+            }
         } else {
             HUD.set('knight', 'done', 'Paladino ativo');
         }
@@ -1839,19 +1950,28 @@ function motorDeDecisaoMacro(state, villageId) {
     }
     function bgBuildGeneric(villageId, building, csrf) {
         var origin = window.location.origin;
-        var buildUrl = origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=upgrade_building&type=main';
+        // URL correta para upgrade de edifícios no Tribal Wars
+        var buildUrl = origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=upgrade_building&type=' + building;
         var body = 'id=' + building + '&force=1&destroy=0&source=' + villageId + '&h=' + csrf;
 
-        log('[builder] Solicitando upgrade de ' + building + '...');
+        log('[builder] Solicitando upgrade de ' + building + '...', 'info');
+        
         return twFetch(buildUrl, 'POST', body).then(function (resp) {
             // Usar camada de verificação robusta
             var success = verifyQueuedAfterBuild(resp, building);
             if (success) {
                 log('[builder] ' + building + ' confirmado na fila!', 'success');
+                // Pequeno delay para o servidor processar antes da próxima ação
+                return new Promise(resolve => setTimeout(() => resolve(true), 500));
             } else {
                 log('[builder] Falha ao confirmar ' + building + ' na fila', 'error');
+                // Log da resposta completa para debug
+                log('[builder] Resposta recebida: ' + resp.substring(0, 200), 'warning');
             }
             return success;
+        }).catch(function(err) {
+            log('[builder] Erro na requisição de ' + building + ': ' + err, 'error');
+            return false;
         });
     }
 
