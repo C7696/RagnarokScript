@@ -1341,11 +1341,37 @@
             // Estimar rewards de quests (simplificado - seria preenchido via API de quests)
             var rewardsQuestsEstimado = 0; // Placeholder para integração futura com quests
 
+            // LER RECURSOS DIRETAMENTE DO DOM PARA PRECISÃO MÁXIMA
+            var woodFromDOM = 0, stoneFromDOM = 0, ironFromDOM = 0;
+            var woodEl = mainDoc.querySelector('#resource_span .wood, .res .wood, #resources .wood');
+            var stoneEl = mainDoc.querySelector('#resource_span .stone, .res .stone, #resources .stone');
+            var ironEl = mainDoc.querySelector('#resource_span .iron, .res .iron, #resources .iron');
+            
+            if (woodEl) {
+                var woodText = woodEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
+                woodFromDOM = parseInt(woodText) || 0;
+            }
+            if (stoneEl) {
+                var stoneText = stoneEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
+                stoneFromDOM = parseInt(stoneText) || 0;
+            }
+            if (ironEl) {
+                var ironText = ironEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
+                ironFromDOM = parseInt(ironText) || 0;
+            }
+            
+            // Usar valores do DOM se disponíveis e diferentes, senão usar rawData
+            var finalWood = (woodFromDOM > 0) ? woodFromDOM : (parseFloat(rawData.village.wood_float) || 0);
+            var finalStone = (stoneFromDOM > 0) ? stoneFromDOM : (parseFloat(rawData.village.stone_float) || 0);
+            var finalIron = (ironFromDOM > 0) ? ironFromDOM : (parseFloat(rawData.village.iron_float) || 0);
+            
+            log('[recursos] DOM: W=' + woodFromDOM + ' S=' + stoneFromDOM + ' I=' + ironFromDOM + ' | RAW: W=' + rawData.village.wood_float + ' S=' + rawData.village.stone_float + ' I=' + rawData.village.iron_float + ' | FINAL: W=' + finalWood + ' S=' + finalStone + ' I=' + finalIron);
+
             var state = {
                 villageId: villageId,
                 csrf: rawData.csrf || extractCsrf(mainHtml),
                 statueEnabled: statueEnabled,
-                recursos: { wood: rawData.village.wood_float, stone: rawData.village.stone_float, iron: rawData.village.iron_float, max: rawData.village.storage_max },
+                recursos: { wood: finalWood, stone: finalStone, iron: finalIron, max: rawData.village.storage_max },
                 producao: { wood: (parseFloat(rawData.village.wood_prod)||0)*3600, stone: (parseFloat(rawData.village.stone_prod)||0)*3600, iron: (parseFloat(rawData.village.iron_prod)||0)*3600 },
                 populacao: { current: parseInt(rawData.village.pop), max: parseInt(rawData.village.pop_max) },
                 niveis: rawData.village.buildings,
