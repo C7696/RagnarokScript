@@ -2097,7 +2097,31 @@ function motorDeDecisaoMacro(state, villageId) {
         console.log(`[TWBot] 🏗️ Iniciando processo de construção para: ${nomeEdificio}`);
 
         // Obter estado atual do DOM (necessário para verificar botão e recursos em tempo real)
-        var villageId = Game.village_id;
+        // CORREÇÃO: Obter village_id do DOM/URL ao invés de Game.village_id (que pode não estar definido)
+        var villageId = null;
+        try {
+            // Tentar obter do objeto Game se existir
+            if (typeof Game !== 'undefined' && Game.village_id) {
+                villageId = Game.village_id;
+            } else {
+                // Fallback: extrair da URL ou do DOM
+                var urlMatch = window.location.href.match(/[?&]village=(\d+)/);
+                if (urlMatch) {
+                    villageId = parseInt(urlMatch[1]);
+                } else {
+                    var villageEl = document.querySelector('#village_switch_left, #village_switch_right, .village_info .name');
+                    if (villageEl && villageEl.href) {
+                        var hrefMatch = villageEl.href.match(/[?&]village=(\d+)/);
+                        if (hrefMatch) {
+                            villageId = parseInt(hrefMatch[1]);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[TWBot] Erro ao obter village_id, tentando continuar...');
+        }
+        
         var mainDoc = document; // Usar o documento atual
         
         // 1. Verificar se botão está disponível no DOM (validação rápida)
