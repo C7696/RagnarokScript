@@ -991,8 +991,16 @@
                 }
             }
 
+            // --- CÓDIGO NOVO: Capturando o ID do Paladino ---
+            var knightId = null;
+            if (isRecruit) {
+                var matchId = html.match(/knight_id["']?\s*:\s*(\d+)/i) || html.match(/knight=(\d+)/i);
+                if (matchId) knightId = matchId[1];
+            }
+
             var csrf = extractCsrf(html);
-            return { canRecruit: canRecruit, isPresent: hasKnight, isRecruiting: isRecruit, csrf: csrf, statueExists: statueExists };
+            // Adicione o knightId no retorno!
+            return { canRecruit: canRecruit, isPresent: hasKnight, isRecruiting: isRecruit, csrf: csrf, statueExists: statueExists, knightId: knightId };
         }
 
         return gmGet(url).then(parseKnightHtml).catch(function (e) {
@@ -1639,43 +1647,60 @@
                 log('[rush-detect] HTML da seção de fila (se existir): ' + (mainDoc.querySelector('#build_queue')?.outerHTML.substring(0, 500) || 'NÃO ENCONTRADO'), 'debug');
             }
             
-            buildQueueRows.forEach((row, index) => {
-                log('[rush-detect] Analisando linha ' + index + ': ' + row.id + ' | Classes: ' + row.className, 'debug');
-                log('[rush-detect] HTML completo da linha: ' + row.outerHTML, 'debug');
-                
-                var timerEl = row.querySelector('.timer, .time_remaining, span[style*="color"]');
-                if (!timerEl) {
-                    log('[rush-detect] Linha ' + index + ': Sem elemento .timer ou .time_remaining, pulando', 'info');
-                    return;
-                }
-                var timerText = timerEl.textContent.trim();
-                log('[rush-detect] Linha ' + index + ': Texto do timer="' + timerText + '"', 'debug');
-                
-                var secondsLeft = timeToSeconds(timerText);
-                log('[rush-detect] Linha ' + index + ': Timer="' + timerText + '" → ' + secondsLeft + ' segundos', 'info');
-                
-                // Verifica se é elegível (menos de 3 minutos = 180s)
-                if (secondsLeft > 0 && secondsLeft < 185) {
-                    // Tenta extrair ID de várias formas
-                    var orderId = row.id.replace('order_', '');
-                    var idLink = row.querySelector('a[href*="id="')?.getAttribute('href') || "";
-                    var m = idLink.match(/id=(\d+)/);
-                    
-                    if (m && m[1]) {
-                        rushCandidates.push(m[1]);
-                        log('[rush-detect] Linha ' + index + ': ELEGÍVEL PARA RUSH! ID=' + m[1] + ' (' + secondsLeft + 's)', 'success');
-                    } else if (orderId && orderId !== '' && !isNaN(orderId)) {
-                        rushCandidates.push(orderId);
-                        log('[rush-detect] Linha ' + index + ': ELEGÍVEL PARA RUSH (via ID da row)! ID=' + orderId + ' (' + secondsLeft + 's)', 'success');
-                    } else {
-                        log('[rush-detect] Linha ' + index + ': Não encontrou ID válido. Link="' + idLink + '" OrderID="' + orderId + '"', 'warning');
+            // --- EXTRAÇÃO HÍBRIDA MAIS AGRESSIVA: Busca direta no HTML bruto por links de finalização ---
+            var orderMatches = mainHtml.match(/build_order_reduce[^"']*[?&]id=(\d+)/g);
+            if (orderMatches) {
+                orderMatches.forEach(function(match) {
+                    var id = match.match(/id=(\d+)/)[1];
+                    // Como o HTML fantasma não renderiza o relógio dinâmico, confiamos
+                    // que se o link de "reduce" (finalizar grátis) está no HTML, a obra é elegível.
+                    if (rushCandidates.indexOf(id) === -1) {
+                        rushCandidates.push(id);
+                        log('[rush-detect] Link de finalização direta encontrado! ID=' + id, 'success');
                     }
-                } else if (secondsLeft <= 0) {
-                    log('[rush-detect] Linha ' + index + ': Tempo inválido ou concluído (' + secondsLeft + 's)', 'info');
-                } else {
-                    log('[rush-detect] Linha ' + index + ': ' + secondsLeft + 's >= 185s, não elegível para rush', 'info');
-                }
-            });
+                });
+            }
+            
+            // Fallback: processamento tradicional via DOM se a extração híbrida não encontrou nada
+            if (rushCandidates.length === 0) {
+                buildQueueRows.forEach((row, index) => {
+                    log('[rush-detect] Analisando linha ' + index + ': ' + row.id + ' | Classes: ' + row.className, 'debug');
+                    log('[rush-detect] HTML completo da linha: ' + row.outerHTML, 'debug');
+                    
+                    var timerEl = row.querySelector('.timer, .time_remaining, span[style*="color"]');
+                    if (!timerEl) {
+                        log('[rush-detect] Linha ' + index + ': Sem elemento .timer ou .time_remaining, pulando', 'info');
+                        return;
+                    }
+                    var timerText = timerEl.textContent.trim();
+                    log('[rush-detect] Linha ' + index + ': Texto do timer="' + timerText + '"', 'debug');
+                    
+                    var secondsLeft = timeToSeconds(timerText);
+                    log('[rush-detect] Linha ' + index + ': Timer="' + timerText + '" → ' + secondsLeft + ' segundos', 'info');
+                    
+                    // Verifica se é elegível (menos de 3 minutos = 180s)
+                    if (secondsLeft > 0 && secondsLeft < 185) {
+                        // Tenta extrair ID de várias formas
+                        var orderId = row.id.replace('order_', '');
+                        var idLink = row.querySelector('a[href*="id="')?.getAttribute('href') || "";
+                        var m = idLink.match(/id=(\d+)/);
+                        
+                        if (m && m[1]) {
+                            rushCandidates.push(m[1]);
+                            log('[rush-detect] Linha ' + index + ': ELEGÍVEL PARA RUSH! ID=' + m[1] + ' (' + secondsLeft + 's)', 'success');
+                        } else if (orderId && orderId !== '' && !isNaN(orderId)) {
+                            rushCandidates.push(orderId);
+                            log('[rush-detect] Linha ' + index + ': ELEGÍVEL PARA RUSH (via ID da row)! ID=' + orderId + ' (' + secondsLeft + 's)', 'success');
+                        } else {
+                            log('[rush-detect] Linha ' + index + ': Não encontrou ID válido. Link="' + idLink + '" OrderID="' + orderId + '"', 'warning');
+                        }
+                    } else if (secondsLeft <= 0) {
+                        log('[rush-detect] Linha ' + index + ': Tempo inválido ou concluído (' + secondsLeft + 's)', 'info');
+                    } else {
+                        log('[rush-detect] Linha ' + index + ': ' + secondsLeft + 's >= 185s, não elegível para rush', 'info');
+                    }
+                });
+            }
             
             log('[rush-detect] Total de candidatos a rush: ' + rushCandidates.length, 'info');
             if (rushCandidates.length > 0) {
@@ -1685,18 +1710,11 @@
             }
 
             var knightRushId = null;
-            if (statueInfo.isRecruiting) {
-                log('[rush-detect] Paladino em recrutamento detectado!', 'info');
-                // Tentar extrair ID do paladino em recrutamento
-                var mK = (statueInfo.htmlPura || "").match(/knight=(\d+)/) || (statueInfo.htmlPura || "").match(/data-knight=["'](\d+)/);
-                if (mK) {
-                    knightRushId = mK[1];
-                    log('[rush-detect] Knight Rush ID encontrado: ' + knightRushId, 'success');
-                } else {
-                    log('[rush-detect] Não encontrou ID do paladino no HTML', 'warning');
-                }
+            if (statueInfo.isRecruiting && statueInfo.knightId) {
+                knightRushId = statueInfo.knightId;
+                log('[rush-detect] Knight Rush ID encontrado: ' + knightRushId, 'success');
             } else {
-                log('[rush-detect] Paladino NÃO está em recrutamento', 'info');
+                log('[rush-detect] Paladino NÃO está em recrutamento ou ID oculto', 'info');
             }
 
             // Estimar loot esperado baseado em recursos disponíveis para saque (simplificado)
@@ -2595,6 +2613,31 @@ function motorDeDecisaoMacro(state, villageId) {
             return false;
         });
     }
+    
+    // ============================================================
+    // BACKGROUND: RUSH KNIGHT via AJAX puro (sem iframe, sem DOM)
+    // ============================================================
+    function bgRushKnight(villageId, knightId, csrf) {
+        var activeCsrf = (typeof unsafeWindow !== 'undefined' && unsafeWindow.game_data) ? unsafeWindow.game_data.csrf : (game_data ? game_data.csrf : csrf);
+        var url = window.location.origin + '/game.php?village=' + villageId + '&screen=statue&ajaxaction=recruit_rush';
+        var body = 'knight=' + knightId + '&home=' + villageId + '&h=' + activeCsrf;
+
+        log('[rush] Disparando rush AJAX fantasma do Paladino (ID: ' + knightId + ')', 'info');
+        
+        return twFetch(url, 'POST', body).then(function(resp) {
+            try {
+                var json = JSON.parse(resp);
+                if (json.success) {
+                    log('[rush] Paladino finalizado instantaneamente!', 'success');
+                    return true;
+                }
+            } catch(e) {
+                if (resp.indexOf('success') !== -1) return true;
+            }
+            return false;
+        }).catch(function() { return false; });
+    }
+    
     function runChecklist(villageId) {
         HUD.init();
         
