@@ -1499,28 +1499,48 @@
             // --- DETECÇÃO DE RUSH (Obras e Paladino) ---
             log('[rush-detect] === INICIANDO DETECÇÃO DE RUSH ===', 'info');
             var rushCandidates = [];
-            var buildQueueRows = mainDoc.querySelectorAll('#build_queue tr, .buildqueue_container tr');
+            // Seletores mais abrangentes para a fila de construção
+            var buildQueueRows = mainDoc.querySelectorAll('#build_queue tr[id^="order_"], #build_queue tr, .buildqueue_container tr, tr[id^="order_"]');
             log('[rush-detect] Encontradas ' + buildQueueRows.length + ' linhas na fila de construção', 'info');
             
+            if (buildQueueRows.length === 0) {
+                log('[rush-detect] NENHUMA linha encontrada com os seletores padrão!', 'warn');
+                log('[rush-detect] HTML da seção de fila (se existir): ' + (mainDoc.querySelector('#build_queue')?.outerHTML.substring(0, 500) || 'NÃO ENCONTRADO'), 'debug');
+            }
+            
             buildQueueRows.forEach((row, index) => {
-                var timerEl = row.querySelector('.timer');
+                log('[rush-detect] Analisando linha ' + index + ': ' + row.id + ' | Classes: ' + row.className, 'debug');
+                log('[rush-detect] HTML completo da linha: ' + row.outerHTML, 'debug');
+                
+                var timerEl = row.querySelector('.timer, .time_remaining, span[style*="color"]');
                 if (!timerEl) {
-                    log('[rush-detect] Linha ' + index + ': Sem elemento .timer, pulando', 'info');
+                    log('[rush-detect] Linha ' + index + ': Sem elemento .timer ou .time_remaining, pulando', 'info');
                     return;
                 }
                 var timerText = timerEl.textContent.trim();
+                log('[rush-detect] Linha ' + index + ': Texto do timer="' + timerText + '"', 'debug');
+                
                 var secondsLeft = timeToSeconds(timerText);
                 log('[rush-detect] Linha ' + index + ': Timer="' + timerText + '" → ' + secondsLeft + ' segundos', 'info');
                 
-                if (secondsLeft < 185) {
+                // Verifica se é elegível (menos de 3 minutos = 180s)
+                if (secondsLeft > 0 && secondsLeft < 185) {
+                    // Tenta extrair ID de várias formas
+                    var orderId = row.id.replace('order_', '');
                     var idLink = row.querySelector('a[href*="id="')?.getAttribute('href') || "";
                     var m = idLink.match(/id=(\d+)/);
-                    if (m) {
+                    
+                    if (m && m[1]) {
                         rushCandidates.push(m[1]);
                         log('[rush-detect] Linha ' + index + ': ELEGÍVEL PARA RUSH! ID=' + m[1] + ' (' + secondsLeft + 's)', 'success');
+                    } else if (orderId && orderId !== '' && !isNaN(orderId)) {
+                        rushCandidates.push(orderId);
+                        log('[rush-detect] Linha ' + index + ': ELEGÍVEL PARA RUSH (via ID da row)! ID=' + orderId + ' (' + secondsLeft + 's)', 'success');
                     } else {
-                        log('[rush-detect] Linha ' + index + ': Não encontrou ID no link: ' + idLink, 'warning');
+                        log('[rush-detect] Linha ' + index + ': Não encontrou ID válido. Link="' + idLink + '" OrderID="' + orderId + '"', 'warning');
                     }
+                } else if (secondsLeft <= 0) {
+                    log('[rush-detect] Linha ' + index + ': Tempo inválido ou concluído (' + secondsLeft + 's)', 'info');
                 } else {
                     log('[rush-detect] Linha ' + index + ': ' + secondsLeft + 's >= 185s, não elegível para rush', 'info');
                 }
@@ -1529,6 +1549,8 @@
             log('[rush-detect] Total de candidatos a rush: ' + rushCandidates.length, 'info');
             if (rushCandidates.length > 0) {
                 log('[rush-detect] IDs elegíveis: [' + rushCandidates.join(', ') + ']', 'success');
+            } else {
+                log('[rush-detect] Nenhum candidato encontrado. Verifique se há construções em andamento.', 'warn');
             }
 
             var knightRushId = null;
