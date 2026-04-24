@@ -9,6 +9,7 @@ __pycache__/
 *.o
 *.obj
 *.class
+*.exe
 *.dll
 *.so
 *.a
@@ -21,6 +22,13 @@ venv/
 .env
 .env.local
 .env.*
+
+# Build directories
+dist/
+build/
+target/
+*.min.js
+*.min.css
 
 # Logs and temp files
 *.log
@@ -41,13 +49,34 @@ coverage/
 htmlcov/
 .coverage
 
-# Distribution
-dist/
-build/
-target/
-.gradle/
-
 # Python caches
 .mypy_cache/
 .pytest_cache/
+
+# Gradle
+.gradle/
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
 ```

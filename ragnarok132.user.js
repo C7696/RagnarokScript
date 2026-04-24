@@ -1220,10 +1220,16 @@
             '#building_' + buildingId + ' .upgrade-button:not(.disabled)',
             '#building_' + buildingId + ' .btn-upgrade:not(.disabled)',
             '#building_' + buildingId + ' a[href*="ajaxaction=upgrade"]:not(.disabled)',
+            '#building_' + buildingId + ' a[id*="' + buildingId + '_buildlink"]:not(.disabled)',
+            '#building_' + buildingId + ' a[id*="buildlink"]:not(.disabled)',
             '.building-' + buildingId + ' .upgrade-button:not(.disabled)',
             '.building-' + buildingId + ' .btn-upgrade:not(.disabled)',
             '#building_' + buildingId + ' button:not(.disabled)',
-            '.building-' + buildingId + ' button:not(.disabled)'
+            '.building-' + buildingId + ' button:not(.disabled)',
+            // Novo: procurar na linha da tabela específica
+            'tr[id*="' + buildingId + '_buildrow"] a:not(.disabled)',
+            'tr[id^="' + buildingId + '_buildrow"] a:not(.disabled)',
+            'tr#' + buildingId + '_buildrow_' + buildingId + ' a:not(.disabled)'
         ];
         
         // Seletores específicos para estátua (pode ter estrutura diferente)
@@ -1288,15 +1294,34 @@
             for (var i = 0; i < allButtons.length; i++) {
                 var el = allButtons[i];
                 var text = (el.innerText || el.value || '').toLowerCase();
-                if ((text.includes('construir') || text.includes('bauen') || text.includes('build') || text.includes('finalizar') || text.includes('ok')) && 
+                // Adicionado 'ausbauen' e 'stufe' para compatibilidade com TW em alemão/europeu
+                if ((text.includes('construir') || text.includes('bauen') || text.includes('build') || 
+                     text.includes('finalizar') || text.includes('ok') || text.includes('ausbauen') || 
+                     text.match(/stufe\s*\d+/)) && 
                     !el.classList.contains('disabled') && 
                     !el.hasAttribute('disabled')) {
                     // Verificar se está relacionado ao edifício atual
                     var parentBuilding = el.closest('#building_' + buildingId, '[data-building="' + buildingId + '"]');
-                    if (parentBuilding || buildingId === 'statue') {
-                        log('[botão] ' + buildingId + ' botão fallback encontrado pelo texto', 'success');
+                    // Novo: também verifica se o ID do elemento contém o nome do edifício
+                    var idMatch = el.id && el.id.toLowerCase().includes(buildingId);
+                    if (parentBuilding || buildingId === 'statue' || idMatch) {
+                        log('[botão] ' + buildingId + ' botão fallback encontrado pelo texto (texto: "' + text.slice(0,20) + '")', 'success');
                         return true;
                     }
+                }
+            }
+        }
+        
+        // NOVO Fallback Extra: Procurar links com ajaxaction=upgrade_building diretamente
+        var upgradeLinks = mainDoc.querySelectorAll('a[href*="ajaxaction=upgrade_building"]');
+        for (var j = 0; j < upgradeLinks.length; j++) {
+            var link = upgradeLinks[j];
+            var href = link.href || link.getAttribute('href') || '';
+            // Verificar se o link é para este edifício específico
+            if (href.includes('type=' + buildingId) || href.includes('type%3D' + buildingId)) {
+                if (!link.classList.contains('disabled') && !link.hasAttribute('disabled')) {
+                    log('[botão] ' + buildingId + ' botão encontrado via ajaxaction=upgrade_building (href: ' + href.slice(0,80) + ')', 'success');
+                    return true;
                 }
             }
         }
@@ -1324,6 +1349,17 @@
                     log('[botão]     Filho ' + k + ': ' + child.tagName + ' class=' + child.className);
                 }
             }
+        }
+        
+        // Debug para TODOS os edifícios quando não encontra botão
+        log('[botão] ' + buildingId + ' NÃO encontrou botão após todas as verificações', 'warning');
+        var upgradeLinksAll = mainDoc.querySelectorAll('a[href*="ajaxaction=upgrade_building"]');
+        log('[botão] URLs com ajaxaction=upgrade_building na página: ' + upgradeLinksAll.length);
+        for (var ul = 0; ul < Math.min(5, upgradeLinksAll.length); ul++) {
+            var ulink = upgradeLinksAll[ul];
+            var uhref = ulink.href || ulink.getAttribute('href') || '';
+            var typeMatch = uhref.match(/type=([^&]+)/);
+            log('[botão]   Link ' + ul + ': type=' + (typeMatch ? typeMatch[1] : 'N/A') + ' | href=' + uhref.slice(0,60));
         }
         
         return false;
