@@ -36,11 +36,87 @@
         autoRecruitKnight: true,
         autoBuildStatue: true,
         autoRushStatue: true,    // Finaliza estátua com ouro se disponível
-        checklistDelay: 2000,    // Delay inicial reduzido para 2s
+        checklistDelay: 1000,    // Delay inicial reduzido para 1s
 
-        // --- NOVAS CONFIGURAÇÕES DE PERFORMANCE ---
-        mainLoopInterval: 20000, // Ciclo padrão: Verifica a aldeia a cada 20 segundos
-        freeRushMinutes: 3       // Finaliza construções grátis se faltar menos de 3 minutos
+        // --- OTIMIZAÇÕES DE PERFORMANCE ---
+        mainLoopInterval: 15000, // Ciclo padrão: Verifica a aldeia a cada 15 segundos (reduzido de 20s)
+        freeRushMinutes: 3,      // Finaliza construções grátis se faltar menos de 3 minutos
+        
+        // Cache e debounce
+        cacheExpiryMs: 5000,     // Cache expira em 5 segundos
+        requestDebounceMs: 500,  // Debounce entre requisições
+        
+        // Paralelismo controlado
+        maxConcurrentRequests: 3,// Máximo de requisições simultâneas
+        
+        // Batch processing
+        processBatchSize: 5      // Processar até 5 tarefas por ciclo
+    };
+    
+    // Cache system para evitar requisições redundantes
+    var RequestCache = {
+        _cache: {},
+        _timestamps: {},
+        
+        get: function(key) {
+            if (this._cache[key] && this._timestamps[key]) {
+                var age = Date.now() - this._timestamps[key];
+                if (age < CONFIG.cacheExpiryMs) {
+                    return this._cache[key];
+                } else {
+                    delete this._cache[key];
+                    delete this._timestamps[key];
+                }
+            }
+            return null;
+        },
+        
+        set: function(key, value) {
+            this._cache[key] = value;
+            this._timestamps[key] = Date.now();
+        },
+        
+        clear: function() {
+            this._cache = {};
+            this._timestamps = {};
+        },
+        
+        // Limpeza automática de entradas expiradas
+        cleanup: function() {
+            var now = Date.now();
+            for (var key in this._timestamps) {
+                if (now - this._timestamps[key] > CONFIG.cacheExpiryMs * 2) {
+                    delete this._cache[key];
+                    delete this._timestamps[key];
+                }
+            }
+        }
+    };
+    
+    // Rate limiter para controlar requisições simultâneas
+    var RateLimiter = {
+        _activeRequests: 0,
+        _queue: [],
+        
+        acquire: function() {
+            return new Promise((resolve) => {
+                if (this._activeRequests < CONFIG.maxConcurrentRequests) {
+                    this._activeRequests++;
+                    resolve();
+                } else {
+                    this._queue.push(resolve);
+                }
+            });
+        },
+        
+        release: function() {
+            this._activeRequests--;
+            if (this._queue.length > 0 && this._activeRequests < CONFIG.maxConcurrentRequests) {
+                const next = this._queue.shift();
+                this._activeRequests++;
+                next();
+            }
+        }
     };
     // ============================================================
     // ESTRATÉGIAS DE CRESCIMENTO (Pesos de 1 a 10)
@@ -344,14 +420,30 @@
     // ============================================================
     // HTTP - APENAS PARA OPERAÇÕES LOCAIS DO JOGO
     // SEM CHAMADAS EXTERNAS PARA IA
+    // COM CACHE E RATE LIMITING PARA PERFORMANCE
     // ============================================================
-    function gmGet(url) {
+    function gmGet(url, useCache) {
+        // Verifica cache se habilitado
+        if (useCache !== false) {
+            var cached = RequestCache.get('gmGet:' + url);
+            if (cached) {
+                log('[gmGet] Cache hit para ' + url.substring(0, 50), 'info');
+                return Promise.resolve(cached);
+            }
+        }
+        
         return new Promise(function (resolve, reject) {
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: url.startsWith('http') ? url : window.location.origin + url,
                 headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                onload: function (r) { resolve(r.responseText); },
+                onload: function (r) { 
+                    // Armazena no cache se sucesso
+                    if (useCache !== false) {
+                        RequestCache.set('gmGet:' + url, r.responseText);
+                    }
+                    resolve(r.responseText); 
+                },
                 onerror: function () { reject(new Error('GET falhou: ' + url)); },
             });
         });
@@ -371,7 +463,26 @@
     }
 
     // fetch nativo do navegador — usa as cookies da sessao sem restricoes de @connect
-    function twFetch(url, method, body) {
+    // Com rate limiting e cache opcional
+    var twFetchLastCall = 0;
+    
+    function twFetch(url, method, body, useCache) {
+        // Verifica cache para GET requests
+        if (method === 'GET' && useCache !== false) {
+            var cached = RequestCache.get('twFetch:' + url + ':' + (body || ''));
+            if (cached) {
+                log('[twFetch] Cache hit para ' + url.substring(0, 50), 'info');
+                return Promise.resolve(cached);
+            }
+        }
+        
+        // Debounce entre requisições para evitar sobrecarga
+        var now = Date.now();
+        var timeSinceLastCall = now - twFetchLastCall;
+        var debounceNeeded = CONFIG.requestDebounceMs - timeSinceLastCall;
+        
+        twFetchLastCall = now;
+        
         var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
         var opts = {
             method: method || 'GET',
@@ -385,14 +496,30 @@
             opts.headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
             opts.body = body;
         }
+        
         log('[twFetch] ' + method + ' → ' + url.substring(0, 100) + (body ? ' | Body: ' + body.substring(0, 50) : ''), 'info');
-        return win.fetch(url, opts).then(function (r) {
+        
+        var fetchPromise = win.fetch(url, opts).then(function (r) {
             log('[twFetch] Status: ' + r.status + ' ' + r.statusText, 'info');
-            return r.text();
+            return r.text().then(function(text) {
+                // Armazena no cache para GET requests bem-sucedidos
+                if (method === 'GET' && useCache !== false && r.status === 200) {
+                    RequestCache.set('twFetch:' + url + ':' + (body || ''), text);
+                }
+                return text;
+            });
         }).catch(function(err) {
             log('[twFetch] ERRO: ' + err.message, 'error');
             throw err;
         });
+        
+        // Aplica debounce se necessário
+        if (debounceNeeded > 0) {
+            log('[twFetch] Aguardando ' + debounceNeeded + 'ms (debounce)', 'info');
+            return new Promise(resolve => setTimeout(resolve, debounceNeeded)).then(() => fetchPromise);
+        }
+        
+        return fetchPromise;
     }
 
     // ============================================================
@@ -1483,13 +1610,17 @@
         var safeStr = function (p) { return p.catch(() => ''); };
         var statueEnabled = (typeof game_data !== 'undefined' && game_data.village.buildings.statue !== undefined);
 
+        // Limpar cache expirado antes de coletar novo estado
+        RequestCache.cleanup();
+
         // Buscar dados adicionais para previsão de overflow (loot e rewards)
         // Nota: Em versão futura, buscar screen=overview_v para ataques em andamento
         // e screen=place para quests/tasks ativas
         
+        // Usar cache para reduzir requisições redundantes
         return Promise.all([
-            safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=flags')),
-            safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=main')),
+            safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=flags', true)),
+            safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=main', true)),
             statueEnabled ? getKnightState(villageId) : Promise.resolve({ canRecruit: false, isPresent: false, isRecruiting: false, statueExists: false })
         ]).then(function (results) {
             var flagsHtml = results[0], mainHtml = results[1], statueInfo = results[2];
