@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Tribal Wars - Smart Automation
 // @namespace    http://tampermonkey.net/
-// @version      9.0
-// @description  Gerenciador multi-village com perfis, score de urgência e priorização global - SEM IA OPERACIONAL
+// @version      5.1
+// @description  Checklist inteligente: bandeiras, estatua e paladino em segundo plano automaticamente
 // @author       You
 // @match        *://*.tribalwars.com.br/*
 // @match        *://*.divoke-kmene.sk/*
 // @match        *://*.guerrastribales.es/*
+// @match        *://*.die-staemme.de/*
 // @match        *://*.tribalwars.us/*
 // @match        *://*.voynaplemyon.com/*
 // @match        *://*.tribalwars.com/*
@@ -17,6 +18,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_log
+// @connect      api.groq.com
 // @connect      *
 // @run-at       document-idle
 // ==/UserScript==
