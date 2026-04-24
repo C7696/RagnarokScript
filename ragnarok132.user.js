@@ -82,6 +82,47 @@
     };
 
     // ============================================================
+    // CUSTOS DE EDIFÍCIOS (BASE TW 10.x - AJUSTÁVEL POR MUNDO)
+    // Formato: [madeira, pedra, ferro, tempo_segundos]
+    // ============================================================
+    const TW_BUILDING_COSTS = {
+        main:    [20, 40, 0, 60],
+        barracks:[80, 120, 0, 120],
+        church:  [300, 500, 0, 300],
+        watchtower:[150, 200, 0, 180],
+        stable:  [200, 300, 150, 240],
+        garage:  [400, 500, 300, 300],
+        snob:    [60000, 60000, 60000, 3600],
+        smith:   [100, 150, 50, 150],
+        place:   [50, 100, 0, 90],
+        statue:  [500, 500, 500, 600],
+        market:  [100, 100, 50, 120],
+        wood:    [50, 0, 0, 60],
+        stone:   [0, 50, 0, 60],
+        iron:    [0, 0, 50, 60],
+        farm:    [70, 90, 0, 90],
+        storage: [100, 100, 0, 90],
+        hide:    [150, 0, 100, 150],
+        wall:    [100, 150, 0, 180]
+    };
+
+    // Fatores de peso estratégico por fase e tipo de edifício
+    const STRATEGIC_WEIGHT = {
+        EARLY: { wood: 1.2, stone: 1.1, iron: 0.8, farm: 1.3, storage: 1.0, main: 1.1, barracks: 1.0, smith: 1.0, statue: 0.9, market: 0.7, stable: 0.6, wall: 0.8, place: 0.5, hide: 0.4, church: 0.3, watchtower: 0.3, garage: 0.2, snob: 0.1 },
+        MID:   { wood: 1.0, stone: 1.0, iron: 1.1, farm: 1.1, storage: 1.0, main: 1.2, barracks: 1.1, smith: 1.2, statue: 1.0, market: 0.9, stable: 1.3, wall: 1.1, place: 0.6, hide: 0.5, church: 0.7, watchtower: 0.6, garage: 0.8, snob: 0.3 },
+        LATE:  { wood: 0.8, stone: 0.8, iron: 1.2, farm: 0.9, storage: 0.9, main: 1.3, barracks: 1.0, smith: 1.3, statue: 1.1, market: 1.0, stable: 1.2, wall: 1.3, place: 0.7, hide: 0.6, church: 0.9, watchtower: 0.8, garage: 1.0, snob: 1.5 }
+    };
+
+    // Perfis de jogador (configurável via GM_setValue)
+    const PLAYER_PROFILES = {
+        balanced: { resource: 1.0, military: 1.0, defense: 1.0, expansion: 0.8 },
+        raider:   { resource: 0.7, military: 1.5, defense: 0.6, expansion: 1.2 },
+        defender: { resource: 0.9, military: 0.8, defense: 1.5, expansion: 0.5 },
+        farmer:   { resource: 1.4, military: 0.6, defense: 0.7, expansion: 0.8 },
+        noble:    { resource: 1.1, military: 1.2, defense: 0.9, expansion: 1.5 }
+    };
+
+    // ============================================================
     // UTILS
     // ============================================================
     function log(msg, type) {
@@ -910,11 +951,16 @@ function motorDeDecisaoMacro(state) {
         var tasks = [];
         var maxFila = state.premium.ativo ? 5 : 2;
         var visHUD = { fase: state.phase, gargalo: 'OK', meta: 'Calculando...', acao: 'Monitorando', motivo: 'Ativo' };
+        
+        // Carregar perfil do jogador (padrão: balanced)
+        var playerProfile = GM_getValue('player_profile_' + state.villageId, 'balanced');
+        var profile = PLAYER_PROFILES[playerProfile] || PLAYER_PROFILES.balanced;
 
         // 1. RUSH GRÁTIS (Sempre primeiro)
         if (state.rushIds.length > 0) {
             state.rushIds.forEach(id => tasks.push({ id: 'build_rush', action: 'DO', orderId: id }));
             visHUD.acao = "RUSH OBRA"; visHUD.motivo = "Limpando fila.";
+            HUD.set('build_general', 'running', 'Finalizando obras');
             HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
             return Promise.resolve(tasks);
         }
@@ -922,6 +968,7 @@ function motorDeDecisaoMacro(state) {
         if (state.knightRushId) {
             tasks.push({ id: 'knight_rush', action: 'DO', knightId: state.knightRushId });
             visHUD.acao = "RUSH PALADINO"; visHUD.motivo = "Finalizando herói!";
+            HUD.set('knight', 'running', 'Recrutamento em rush');
             HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
             return Promise.resolve(tasks);
         }
@@ -932,7 +979,12 @@ function motorDeDecisaoMacro(state) {
             if (best) {
                 tasks.push({ id: 'flag', action: 'DO', reason: "Ativando " + best.category });
                 visHUD.acao = "BANDEIRA"; visHUD.motivo = "Otimizando produção.";
+                HUD.set('flag', 'running', 'Selecionando categoria');
+            } else {
+                HUD.set('flag', 'idle', 'Sem bandeiras disponíveis');
             }
+        } else {
+            HUD.set('flag', 'done', 'Bandeira ativa');
         }
 
         // 3. PALADINO (Com trava de erro do servidor)
@@ -940,6 +992,13 @@ function motorDeDecisaoMacro(state) {
         if (state.knight.canRecruit && Date.now() > pBlock) {
             tasks.push({ id: 'knight', action: 'DO' });
             visHUD.acao = "RECRUTAR PALADINO";
+            HUD.set('knight', 'running', 'Pronto para recrutar');
+        } else if (state.knight.isRecruiting) {
+            HUD.set('knight', 'waiting', 'Recrutando...');
+        } else if (!state.knight.isPresent) {
+            HUD.set('knight', 'idle', 'Estátua não construída');
+        } else {
+            HUD.set('knight', 'done', 'Paladino ativo');
         }
 
         // 4. MARCOS ESTRATÉGICOS (Milestones)
@@ -952,21 +1011,164 @@ function motorDeDecisaoMacro(state) {
         });
         visHUD.meta = activeMilestone ? activeMilestone.label : "Otimização";
 
-        // 5. OBRAS GERAIS
+        // Atualizar status da estátua
+        if (state.statueEnabled) {
+            if (state.knight.isPresent) {
+                HUD.set('statue', 'done', 'Construída');
+            } else if (state.knight.isRecruiting) {
+                HUD.set('statue', 'running', 'Recrutando paladino');
+            } else {
+                HUD.set('statue', 'idle', 'Disponível');
+            }
+        } else {
+            HUD.set('statue', 'skip', 'Não disponível');
+        }
+
+        // 5. OBRAS GERAIS COM MOTOR DE PRECISÃO
         if (state.filaBuilds < maxFila) {
             var selectedTarget = null;
             var taxaPop = (state.populacao.current / (state.populacao.max || 1)) * 100;
+            
+            // Verificação de gargalos críticos
+            var riscoArmazem = false;
+            var recursosPercent = {
+                wood: state.recursos.wood / state.recursos.max,
+                stone: state.recursos.stone / state.recursos.max,
+                iron: state.recursos.iron / state.recursos.max
+            };
+            if (recursosPercent.wood > 0.95 || recursosPercent.stone > 0.95 || recursosPercent.iron > 0.95) {
+                riscoArmazem = true;
+            }
+            
+            // Calcular tempo até gargalo (em horas)
+            var tempoAteGargalo = 999;
+            for (var res in recursosPercent) {
+                if (recursosPercent[res] > 0.8) {
+                    var producaoHora = state.producao[res] || 1;
+                    var capacidadeRestante = state.recursos.max - state.recursos[res];
+                    var horas = capacidadeRestante / (producaoHora || 1);
+                    if (horas < tempoAteGargalo) tempoAteGargalo = horas;
+                }
+            }
 
+            // PRIORIDADE 1: Gargalo de população (>92%)
             if (taxaPop > 92 && state.podeSerConstruido['farm']) {
-                selectedTarget = 'farm'; visHUD.gargalo = "POPULAÇÃO";
-            } else if (activeMilestone) {
-                selectedTarget = Object.keys(activeMilestone.reqs).find(ed => state.niveis[ed] !== undefined && parseInt(state.niveis[ed]||0) < activeMilestone.reqs[ed] && state.podeSerConstruido[ed]);
+                selectedTarget = 'farm'; 
+                visHUD.gargalo = "POPULAÇÃO";
+                visHUD.motivo = "População em " + Math.round(taxaPop) + "%";
+            }
+            // PRIORIDADE 2: Risco iminente de armazém cheio (<2h para encher)
+            else if (riscoArmazem && tempoAteGargalo < 2) {
+                // Escolher edifício de recurso mais carente
+                var recursoMaisCarente = Object.keys(recursosPercent).reduce((a, b) => recursosPercent[a] > recursosPercent[b] ? a : b);
+                if (state.podeSerConstruido[recursoMaisCarente]) {
+                    selectedTarget = recursoMaisCarente;
+                    visHUD.gargalo = "ARMAZÉM CHEIO";
+                    visHUD.motivo = Math.round(recursosPercent[recursoMaisCarente]*100) + "% - " + Math.round(tempoAteGargalo*60) + "min";
+                }
+            }
+            // PRIORIDADE 3: Marcos estratégicos com análise de custo-benefício
+            else if (activeMilestone) {
+                var candidatos = Object.keys(activeMilestone.reqs).filter(ed => 
+                    state.niveis[ed] !== undefined && 
+                    parseInt(state.niveis[ed]||0) < activeMilestone.reqs[ed] && 
+                    state.podeSerConstruido[ed]
+                );
+                
+                if (candidatos.length > 0) {
+                    // Calcular score baseado em: custo real, retorno por tempo, peso estratégico
+                    var scores = candidatos.map(function(ed) {
+                        var custo = TW_BUILDING_COSTS[ed] || [100, 100, 100, 100];
+                        var nivelAtual = parseInt(state.niveis[ed] || 0);
+                        var custoTotalMadeira = custo[0] * Math.pow(1.5, nivelAtual);
+                        var custoTotalPedra = custo[1] * Math.pow(1.5, nivelAtual);
+                        var custoTotalFerro = custo[2] * Math.pow(1.5, nivelAtual);
+                        var tempoConstrucao = custo[3] * Math.pow(1.1, nivelAtual);
+                        
+                        // Custo total normalizado
+                        var custoNormalizado = (custoTotalMadeira + custoTotalPedra + custoTotalFerro) / 100;
+                        
+                        // Retorno por recurso (edifícios de recurso têm retorno contínuo)
+                        var retornoRecurso = ['wood', 'stone', 'iron', 'farm'].includes(ed) ? 1.5 : 1.0;
+                        
+                        // Peso estratégico baseado na fase e perfil do jogador
+                        var pesoBase = STRATEGIC_WEIGHT[state.phase][ed] || 1.0;
+                        var ajustePerfil = 1.0;
+                        
+                        // Ajustar pelo perfil do jogador
+                        if (['wood', 'stone', 'iron'].includes(ed)) ajustePerfil = profile.resource;
+                        else if (['barracks', 'stable', 'garage', 'smith'].includes(ed)) ajustePerfil = profile.military;
+                        else if (['wall', 'hide', 'church', 'watchtower'].includes(ed)) ajustePerfil = profile.defense;
+                        else if (['main', 'market', 'snob'].includes(ed)) ajustePerfil = profile.expansion;
+                        
+                        // Tempo até resolver gargalo atual
+                        var urgenciaGargalo = 1.0;
+                        if (ed === 'farm' && taxaPop > 85) urgenciaGargalo = 1.3;
+                        if (riscoArmazem && ['wood', 'stone', 'iron'].includes(ed)) urgenciaGargalo = 1.2;
+                        
+                        // Score final: (peso * retorno * urgencia * perfil) / (custo * (nivel+1))
+                        var score = (pesoBase * retornoRecurso * urgenciaGargalo * ajustePerfil) / (custoNormalizado * (nivelAtual + 1) * 0.1);
+                        
+                        // Bonus por ser pré-requisito direto de outras construções importantes
+                        var bonusPreReq = 0;
+                        for (var otherEd in TW_BUILDING_REQS) {
+                            if (TW_BUILDING_REQS[otherEd][ed] && !state.podeSerConstruido[otherEd]) {
+                                bonusPreReq += 0.2;
+                            }
+                        }
+                        
+                        return { ed: ed, score: score + bonusPreReq, custo: custoNormalizado, tempo: tempoConstrucao };
+                    });
+                    
+                    // Ordenar por score decrescente
+                    scores.sort((a, b) => b.score - a.score);
+                    
+                    selectedTarget = scores[0].ed;
+                    visHUD.gargalo = "CUSTO-BENEFÍCIO";
+                    visHUD.motivo = "Score: " + scores[0].score.toFixed(2) + " | Custo: " + Math.round(scores[0].custo);
+                }
+            }
+            // PRIORIDADE 4: Otimização geral baseada em score quando não há milestone ativo
+            else {
+                var todosCandidatos = Object.keys(TW_BUILDING_REQS).filter(ed => 
+                    state.podeSerConstruido[ed] && 
+                    ed !== 'snob' && // Snob só via milestone específico
+                    (state.niveis[ed] || 0) < 25 // Limite prático
+                );
+                
+                if (todosCandidatos.length > 0) {
+                    var scoresGerais = todosCandidatos.map(function(ed) {
+                        var custo = TW_BUILDING_COSTS[ed] || [100, 100, 100, 100];
+                        var nivelAtual = parseInt(state.niveis[ed] || 0);
+                        var custoNormalizado = ((custo[0] + custo[1] + custo[2]) * Math.pow(1.5, nivelAtual)) / 100;
+                        var pesoBase = STRATEGIC_WEIGHT[state.phase][ed] || 1.0;
+                        var ajustePerfil = 1.0;
+                        
+                        if (['wood', 'stone', 'iron'].includes(ed)) ajustePerfil = profile.resource;
+                        else if (['barracks', 'stable', 'garage', 'smith'].includes(ed)) ajustePerfil = profile.military;
+                        else if (['wall', 'hide', 'church', 'watchtower'].includes(ed)) ajustePerfil = profile.defense;
+                        else if (['main', 'market', 'snob'].includes(ed)) ajustePerfil = profile.expansion;
+                        
+                        var score = (pesoBase * ajustePerfil) / (custoNormalizado * (nivelAtual + 1) * 0.1);
+                        return { ed: ed, score: score };
+                    });
+                    
+                    scoresGerais.sort((a, b) => b.score - a.score);
+                    selectedTarget = scoresGerais[0].ed;
+                    visHUD.gargalo = "OTIMIZAÇÃO";
+                    visHUD.motivo = "Melhor ROI: " + selectedTarget;
+                }
             }
 
             if (selectedTarget) {
                 tasks.push({ id: 'build_general', action: 'DO', target: selectedTarget });
                 visHUD.acao = selectedTarget.toUpperCase();
+                HUD.set('build_general', 'running', 'Construindo ' + selectedTarget);
+            } else {
+                HUD.set('build_general', 'idle', 'Aguardando vaga na fila');
             }
+        } else {
+            HUD.set('build_general', 'waiting', 'Fila cheia (' + state.filaBuilds + '/' + maxFila + ')');
         }
 
         HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
