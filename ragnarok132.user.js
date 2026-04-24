@@ -2060,7 +2060,61 @@ function motorDeDecisaoMacro(state, villageId) {
     async function tentarConstruirEdificio(nomeEdificio) {
         console.log(`[TWBot] 🏗️ Iniciando processo de construção para: ${nomeEdificio}`);
 
-        // A MÁGICA ACONTECE AQUI:
+        // Obter estado atual do DOM (necessário para verificar botão e recursos em tempo real)
+        var villageId = Game.village_id;
+        var mainDoc = document; // Usar o documento atual
+        
+        // 1. Verificar se botão está disponível no DOM (validação rápida)
+        if (!isButtonAvailable(nomeEdificio, mainDoc)) {
+            console.log(`[TWBot] ⚠️ ${nomeEdificio} botão não disponível (fila cheia, nível máximo ou sem recursos)`);
+            return false;
+        }
+
+        // 2. Extrair recursos atuais do DOM (código inline baseado em collectVillageState)
+        var woodFromDOM = 0, stoneFromDOM = 0, ironFromDOM = 0;
+        var woodEl = mainDoc.querySelector('#resource_span .wood, .res .wood, #resources .wood');
+        var stoneEl = mainDoc.querySelector('#resource_span .stone, .res .stone, #resources .stone');
+        var ironEl = mainDoc.querySelector('#resource_span .iron, .res .iron, #resources .iron');
+        
+        if (woodEl) {
+            var woodText = woodEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
+            woodFromDOM = parseInt(woodText) || 0;
+        }
+        if (stoneEl) {
+            var stoneText = stoneEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
+            stoneFromDOM = parseInt(stoneText) || 0;
+        }
+        if (ironEl) {
+            var ironText = ironEl.textContent.trim().replace(/[,.]/g, '').replace(/[^0-9]/g, '');
+            ironFromDOM = parseInt(ironText) || 0;
+        }
+        
+        var recursosDOM = { wood: woodFromDOM, stone: stoneFromDOM, iron: ironFromDOM };
+        
+        // Obter nível atual do edifício
+        var nivelAtual = 0;
+        var buildingRow = mainDoc.querySelector('#building_' + nomeEdificio);
+        if (buildingRow) {
+            var levelMatch = buildingRow.className.match(/level_(\d+)/);
+            if (levelMatch) {
+                nivelAtual = parseInt(levelMatch[1]);
+            }
+        }
+        
+        var custosBase = TW_BUILDING_COSTS[nomeEdificio];
+        
+        if (custosBase && recursosDOM.wood > 0) {
+            var custoMadeira = Math.floor(custosBase[0] * Math.pow(1.5, nivelAtual));
+            var custoPedra = Math.floor(custosBase[1] * Math.pow(1.5, nivelAtual));
+            var custoFerro = Math.floor(custosBase[2] * Math.pow(1.5, nivelAtual));
+            
+            if (recursosDOM.wood < custoMadeira || recursosDOM.stone < custoPedra || recursosDOM.iron < custoFerro) {
+                console.log(`[TWBot] ⚠️ ${nomeEdificio} sem recursos suficientes. Necessário: W=${custoMadeira}, S=${custoPedra}, I=${custoFerro}`);
+                return false;
+            }
+        }
+
+        // 3. A MÁGICA ACONTECE AQUI:
         // Em vez de verificar o botão manualmente, chamamos a função robusta
         const sucesso = await clicarBotaoConstruir(nomeEdificio);
 
@@ -2178,10 +2232,10 @@ function motorDeDecisaoMacro(state, villageId) {
                             log('[executor] Target ' + task.target + ' está bloqueado, pulando', 'warning');
                             p = Promise.resolve(false);
                         }
-                        // Validação final antes de executar: garantir que ainda é executável
-                        else if (isBuildExecutable(task.target, state, state._mainDoc)) {
-                            // NOVA ABORDAGEM: Usa a função assíncrona robusta clicarBotaoConstruir
-                            // que implementa estratégia multi-camada para encontrar o botão
+                        // NOVA ABORDAGEM: Pula verificação antiga e usa diretamente a função assíncrona robusta
+                        // clicarBotaoConstruir que implementa estratégia multi-camada para encontrar o botão
+                        else {
+                            // A própria tentarConstruirEdificio já verifica recursos, fila e botão internamente
                             p = tentarConstruirEdificio(task.target)
                                 .then(function(success) {
                                     if (success) {
@@ -2193,9 +2247,6 @@ function motorDeDecisaoMacro(state, villageId) {
                                     }
                                     return success;
                                 });
-                        } else {
-                            log('[executor] ' + task.target + ' não é mais executável, pulando', 'warn');
-                            p = Promise.resolve(false);
                         }
                     }
                     else if (task.id === 'statue') {
