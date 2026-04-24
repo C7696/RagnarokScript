@@ -1775,7 +1775,7 @@
                 populacao: { current: parseInt(rawData.village.pop), max: parseInt(rawData.village.pop_max) },
                 niveis: rawData.village.buildings,
                 filaBuilds: mainDoc.querySelectorAll('.lit-item, #build_queue tr .timer').length,
-                rushIds: rushCandidates,
+                rushIds: rushCandidates, // Alias para compatibilidade com motorDeDecisaoMacro
                 knightRushId: knightRushId,
                 premium: { ativo: !!(rawData.features?.Premium?.active) },
                 phase: getGamePhase(parseInt(rawData.village.points)),
