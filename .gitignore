@@ -1,51 +1,52 @@
-```
-# User script metadata and distribution
+# User script distribution
 *.user.js
-*.meta.js
 
-# Logs and temporary files
+# Compiled and build artifacts
+*.pyc
+*.class
+*.o
+*.exe
+*.dll
+*.so
+*.a
+*.obj
+*.out
+
+# Dependencies
+node_modules/
+venv/
+.venv/
+__pycache__/
+dist/
+build/
+target/
+.gradle/
+.mypy_cache/
+.pytest_cache/
+
+# Logs and temp files
 *.log
 *.tmp
 *.swp
+*.swo
 
-# Environment files
+# Environment
 .env
 .env.local
 *.env.*
 
-# Editor/IDE files
+# Editors
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# OS specific
+# System files
 .DS_Store
 Thumbs.db
 
-# Coverage reports
+# Coverage
 coverage/
 htmlcov/
 .coverage
-
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Build outputs
-dist/
-build/
-target/
-
-# Dependency directories
-node_modules/
-venv/
-.venv/
-.mypy_cache/
-.pytest_cache/
-.gradle/
 
 # Compressed files
 *.zip
@@ -66,4 +67,7 @@ venv/
 *.Z
 *.lz
 *.lzo
-```
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
