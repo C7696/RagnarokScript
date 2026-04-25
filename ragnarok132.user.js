@@ -1859,16 +1859,32 @@
         // Quest popup: busca no máximo uma vez a cada 5 minutos por aldeia
         var QUEST_TTL  = 300000;
         var questTsKey = 'twbot_quest_ts_' + villageId;
-        var fetchQuest = (Date.now() - GM_getValue(questTsKey, 0)) > QUEST_TTL;
-        if (fetchQuest) GM_setValue(questTsKey, Date.now());
+        var lastQuestTs = GM_getValue(questTsKey, 0);
+        var sinceLast = Date.now() - lastQuestTs;
+        
+        // Força refresh se: (1) nunca buscou, (2) TTL expirou, ou (3) último resultado foi vazio
+        var cachedQuest = GM_getValue('twbot_quest_html_' + villageId, '');
+        var forceRefresh = !cachedQuest || sinceLast > QUEST_TTL;
+        
+        if (forceRefresh) {
+            GM_setValue(questTsKey, Date.now());
+        }
+        
         var questUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=quest_popup&tab=main-tab&quest=0';
-
+        
         // Usar cache para reduzir requisições redundantes
         return Promise.all([
             safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=flags', true)),
             safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=main', true)),
             statueEnabled ? getKnightState(villageId) : Promise.resolve({ canRecruit: false, isPresent: false, isRecruiting: false, statueExists: false }),
-            fetchQuest ? safeStr(twFetch(questUrl, 'GET', null, false)) : Promise.resolve('')
+            forceRefresh 
+                ? safeStr(gmGet(questUrl, false)).then(function(html) {
+                      // Cache do HTML cru para fallback imediato
+                      GM_setValue('twbot_quest_html_' + villageId, html || '');
+                      log('[collectVillageState] Quest HTML: ' + (html ? html.slice(0, 200).replace(/\s+/g, ' ') : '(vazio)'), html ? 'info' : 'warning');
+                      return html;
+                  })
+                : Promise.resolve(cachedQuest)
         ]).then(function (results) {
             var flagsHtml = results[0], mainHtml = results[1], statueInfo = results[2], questHtml = results[3] || '';
             var mainDoc = new DOMParser().parseFromString(mainHtml, 'text/html');
@@ -3109,7 +3125,15 @@ function motorDeDecisaoMacro(state, villageId) {
      * Suporta resposta JSON ou HTML (estrutura TW 10.x).
      */
     function parseQuestRewards(html) {
-        if (!html) return [];
+        if (!html) {
+            log('[quest-rewards] Parse: HTML vazio', 'warning');
+            return [];
+        }
+        
+        // Log do tamanho e preview do HTML para diagnóstico
+        var preview = html.length > 300 ? html.slice(0, 300).replace(/\s+/g, ' ') : html.replace(/\s+/g, ' ');
+        log('[quest-rewards] Parse: HTML recebido (' + html.length + ' chars): ' + preview, 'info');
+        
         var rewards = [];
 
         // Tentativa 1: JSON direto
@@ -3125,12 +3149,22 @@ function motorDeDecisaoMacro(state, villageId) {
                         iron:  parseInt(r.iron  || (r.resources && r.resources.iron)  || 0) || 0
                     };
                 }).filter(function(r) { return r.id; });
-                if (mapped.length) return mapped;
+                if (mapped.length) {
+                    log('[quest-rewards] Parse: JSON direto encontrou ' + mapped.length + ' recompensas', 'success');
+                    return mapped;
+                }
             }
-        } catch(e) {}
+        } catch(e) {
+            log('[quest-rewards] Parse: Não é JSON válido (' + e.message + ')', 'info');
+        }
 
         // Tentativa 2: HTML parsing ampliado (nova estrutura TW)
         var doc = new DOMParser().parseFromString(html, 'text/html');
+        
+        // Debug: verificar se há elementos conhecidos no HTML
+        var hasRewardElements = doc.querySelectorAll('.quest-reward, .reward-item, [data-reward-id], form[action*="claim"], .reward-row, tr.reward, a[href*="reward_id"]').length > 0;
+        log('[quest-rewards] Parse: Elementos de reward no HTML? ' + hasRewardElements, hasRewardElements ? 'info' : 'warning');
+        
         doc.querySelectorAll('.quest-reward, .reward-item, [data-reward-id], form[action*="claim"], .reward-row, tr.reward').forEach(function(el) {
             var idInput = el.querySelector('input[name="reward_id"], input[name="id"]');
             var formInput = el.closest && el.closest('form') && el.closest('form').querySelector('input[name="reward_id"]');
@@ -3160,8 +3194,25 @@ function motorDeDecisaoMacro(state, villageId) {
                 if (m) rewards.push({ id: m[1], wood: 0, stone: 0, iron: 0 });
             });
         }
+        
+        // Tentativa 4: buscar por onclick com claimReward ou similar
+        if (rewards.length === 0) {
+            doc.querySelectorAll('[onclick*="reward_id"], [onclick*="claimReward"]').forEach(function(el) {
+                var onclick = el.getAttribute('onclick') || '';
+                var m = onclick.match(/reward_id[^\\d]*(\\d+)/i) || onclick.match(/['\"](\\d+)['\"]/);
+                if (m) {
+                    var id = m[1];
+                    if (id && !rewards.find(function(r) { return r.id === id; })) {
+                        rewards.push({ id: String(id), wood: 0, stone: 0, iron: 0 });
+                    }
+                }
+            });
+        }
 
         log('[quest-rewards] Parse: ' + rewards.length + ' recompensas encontradas', rewards.length ? 'success' : 'warning');
+        if (rewards.length > 0) {
+            log('[quest-rewards] IDs encontrados: [' + rewards.map(function(r) { return r.id; }).join(', ') + ']', 'info');
+        }
         return rewards;
     }
 
