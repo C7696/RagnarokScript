@@ -39,7 +39,7 @@
         checklistDelay: 1000,    // Delay inicial reduzido para 1s
 
         // --- OTIMIZAÇÕES DE PERFORMANCE ---
-        mainLoopInterval: 15000, // Ciclo padrão: Verifica a aldeia a cada 15 segundos (reduzido de 20s)
+        mainLoopInterval: 20000, // Ciclo padrão: 20s base + ±2s jitter para evitar sincronização
         freeRushMinutes: 3,      // Finaliza construções grátis se faltar menos de 3 minutos
 
         // Cache e debounce
@@ -50,13 +50,17 @@
         maxConcurrentRequests: 3,// Máximo de requisições simultâneas
 
         // Batch processing
-        processBatchSize: 5      // Processar até 5 tarefas por ciclo
+        processBatchSize: 5,     // Processar até 5 tarefas por ciclo
+
+        // Modo Observação: analisa sem executar
+        observationMode: GM_getValue('tw_obs_mode', false)
     };
 
     // Cache system para evitar requisições redundantes
     var RequestCache = {
         _cache: {},
         _timestamps: {},
+        _maxSize: 200, // limite máximo de entradas simultâneas
 
         get: function(key) {
             if (this._cache[key] && this._timestamps[key]) {
@@ -72,6 +76,15 @@
         },
 
         set: function(key, value) {
+            // Evicção LRU: remove a entrada mais antiga se o limite for atingido
+            var keys = Object.keys(this._cache);
+            if (keys.length >= this._maxSize) {
+                var oldest = keys.reduce(function(a, b) {
+                    return (this._timestamps[a] || 0) < (this._timestamps[b] || 0) ? a : b;
+                }.bind(this));
+                delete this._cache[oldest];
+                delete this._timestamps[oldest];
+            }
             this._cache[key] = value;
             this._timestamps[key] = Date.now();
         },
@@ -81,7 +94,7 @@
             this._timestamps = {};
         },
 
-        // Limpeza automática de entradas expiradas
+        // Limpeza de entradas expiradas (chamada periodicamente e em cada coleta)
         cleanup: function() {
             var now = Date.now();
             for (var key in this._timestamps) {
@@ -110,9 +123,10 @@
         },
 
         release: function() {
+            if (this._activeRequests <= 0) return;
             this._activeRequests--;
             if (this._queue.length > 0 && this._activeRequests < CONFIG.maxConcurrentRequests) {
-                const next = this._queue.shift();
+                var next = this._queue.shift();
                 this._activeRequests++;
                 next();
             }
@@ -133,17 +147,51 @@
     // ============================================================
     // ROADMAP / MARCOS ESTRATÉGICOS (METAS DO JOGO)
     // ============================================================
-    const MILESTONES = [
-        { id: 'unlock_statue',   label: 'Erigir Estátua',      reqs: { statue: 1 } },
-        { id: 'hq_early',        label: 'Ed. Principal Nv 5',  reqs: { main: 5 } },
-        { id: 'unlock_barracks', label: 'Quartel de Tropa',    reqs: { barracks: 1 } },
-        { id: 'unlock_smith',    label: 'Caminho do Ferreiro', reqs: { smith: 1 } },
-        { id: 'economy_base',    label: 'Base Econômica 10',   reqs: { wood: 10, stone: 10, iron: 8 } },
-        { id: 'hq_mid',          label: 'Aceleração HQ Nv 10', reqs: { main: 10 } },
-        { id: 'stable_path',     label: 'Desbloqueio Estábulo',reqs: { stable: 1 } },
-        { id: 'economy_15',      label: 'Escala Econômica',    reqs: { wood: 15, stone: 15, iron: 15 } },
-        { id: 'noble_prep',      label: 'Preparo da Academia', reqs: { main: 20, smith: 20, market: 10 } }
+    // Milestones globais: fundações universais que toda aldeia constrói primeiro
+    const MILESTONES_GLOBAL = [
+        { id: 'unlock_statue',   label: 'Erigir Estátua',       reqs: { statue: 1 } },
+        { id: 'hq_early',        label: 'HQ Nv 5',              reqs: { main: 5 } },
+        { id: 'unlock_barracks', label: 'Quartel de Tropa',      reqs: { barracks: 1 } },
+        { id: 'unlock_smith',    label: 'Caminho do Ferreiro',   reqs: { smith: 1 } },
+        { id: 'hq_mid',          label: 'HQ Nv 10',             reqs: { main: 10 } },
+        { id: 'unlock_stable',   label: 'Desbloqueio Estábulo', reqs: { stable: 1 } },
+        { id: 'quartel_base',    label: 'Quartel Base',         reqs: { barracks: 5 } },
     ];
+
+    // Milestones por perfil: roadmap divergente após as fundações globais
+    const MILESTONES_BY_PROFILE = {
+        // Aldeia econômica: maximizar produção de recursos e capacidade de armazém
+        economic: [
+            { id: 'eco_base',     label: 'Base Econômica',     reqs: { wood: 10, stone: 10, iron: 8 } },
+            { id: 'eco_market',   label: 'Mercado Ativo',      reqs: { market: 5, storage: 8 } },
+            { id: 'eco_scale',    label: 'Escala Econômica',   reqs: { wood: 15, stone: 15, iron: 15 } },
+            { id: 'eco_advanced', label: 'Economia Avançada',  reqs: { wood: 20, stone: 20, iron: 18, storage: 15 } },
+        ],
+        // Aldeia militar: capacidade ofensiva — estábulo, ferreiro e quartel em foco
+        military: [
+            { id: 'mil_stable',     label: 'Desbloqueio Estábulo', reqs: { stable: 1 } },
+            { id: 'mil_smith10',    label: 'Ferreiro Nv 10',       reqs: { smith: 10 } },
+            { id: 'mil_barracks10', label: 'Quartel Nv 10',        reqs: { barracks: 10, stable: 5 } },
+            { id: 'mil_wall',       label: 'Muralha Defensiva',    reqs: { wall: 10 } },
+            { id: 'mil_full',       label: 'Arsenal Completo',     reqs: { barracks: 20, stable: 15, smith: 20 } },
+        ],
+        // Aldeia support: muralha alta, igreja, storage — resistência máxima
+        support: [
+            { id: 'sup_wall10',   label: 'Muralha Nv 10',       reqs: { wall: 10 } },
+            { id: 'sup_church',   label: 'Igreja Ativa',         reqs: { church: 1 } },
+            { id: 'sup_storage',  label: 'Storage Ampliado',     reqs: { storage: 15 } },
+            { id: 'sup_wall20',   label: 'Muralha Máxima',       reqs: { wall: 20 } },
+        ],
+        // Aldeia balanced: desenvolvimento completo com noble prep como endgame
+        balanced: [
+            { id: 'bal_eco_base',  label: 'Base Econômica',    reqs: { wood: 10, stone: 10, iron: 8 } },
+            { id: 'bal_stable',    label: 'Estábulo',          reqs: { stable: 1 } },
+            { id: 'bal_eco15',     label: 'Escala Econômica',  reqs: { wood: 15, stone: 15, iron: 15 } },
+            { id: 'bal_market10',  label: 'Mercado Ativo',     reqs: { market: 10 } },
+            { id: 'bal_eco20',     label: 'Minas Avançadas',   reqs: { wood: 20, stone: 20, iron: 18 } },
+            { id: 'noble_prep',    label: 'Preparo Academia',  reqs: { main: 20, smith: 20, market: 10 } },
+        ],
+    };
 
     var FLAG_TYPE_MAP = {
         1: 'resource', 2: 'recruitment', 3: 'attack',
@@ -156,45 +204,101 @@
         LATE:  { attack: 100, loot: 95, coin: 80, recruitment: 70, resource: 60, population: 50, defense: 40, luck: 30 },
     };
 
+    // Pesos por perfil de aldeia — decisor primário (fase atua como modulador secundário ±20%)
+    var CATEGORY_PRIORITY_BY_PROFILE = {
+        economic: { resource: 100, population: 85, loot: 55, recruitment: 35, attack: 25, defense: 20, luck: 10, coin: 15 },
+        military: { attack: 100, recruitment: 95, loot: 85, defense: 55, resource: 40, population: 30, luck: 20, coin: 10 },
+        support:  { defense: 100, population: 90, resource: 55, recruitment: 30, attack: 15, loot: 20, luck: 10, coin: 10 },
+        balanced: { resource: 75, attack: 70, recruitment: 65, loot: 60, population: 60, defense: 50, luck: 20, coin: 10 },
+    };
+
     // ============================================================
     // CUSTOS DE EDIFÍCIOS (BASE TW 10.x - AJUSTÁVEL POR MUNDO)
     // Formato: [madeira, pedra, ferro, tempo_segundos]
     // ============================================================
-    const TW_BUILDING_COSTS = {
-        main:    [20, 40, 0, 60],
-        barracks:[80, 120, 0, 120],
-        church:  [300, 500, 0, 300],
-        watchtower:[150, 200, 0, 180],
-        stable:  [200, 300, 150, 240],
-        garage:  [400, 500, 300, 300],
-        snob:    [60000, 60000, 60000, 3600],
-        smith:   [100, 150, 50, 150],
-        place:   [50, 100, 0, 90],
-        statue:  [500, 500, 500, 600],
-        market:  [100, 100, 50, 120],
-        wood:    [50, 0, 0, 60],
-        stone:   [0, 50, 0, 60],
-        iron:    [0, 0, 50, 60],
-        farm:    [70, 90, 0, 90],
-        storage: [100, 100, 0, 90],
-        hide:    [150, 0, 100, 150],
-        wall:    [100, 150, 0, 180]
+    // Custos base de edifícios: [madeira, pedra, ferro, tempo_segundos] no nível 1 (de 0→1).
+    // Estes são PADRÕES e variam por mundo/versão. Sobrescreva via window.TWBot.setCostOverride()
+    // ou GM_setValue('twbot_costs_override', JSON.stringify({barracks:[90,130,0,130], ...})).
+    var TW_BUILDING_COSTS = {
+        main:       [20, 40, 0, 60],
+        barracks:   [80, 120, 0, 120],
+        church:     [300, 500, 0, 300],
+        watchtower: [150, 200, 0, 180],
+        stable:     [200, 300, 150, 240],
+        garage:     [400, 500, 300, 300],
+        snob:       [60000, 60000, 60000, 3600],
+        smith:      [100, 150, 50, 150],
+        place:      [50, 100, 0, 90],
+        statue:     [500, 500, 500, 600],
+        market:     [100, 100, 50, 120],
+        wood:       [50, 0, 0, 60],
+        stone:      [0, 50, 0, 60],
+        iron:       [0, 0, 50, 60],
+        farm:       [70, 90, 0, 90],
+        storage:    [100, 100, 0, 90],
+        hide:       [150, 0, 100, 150],
+        wall:       [100, 150, 0, 180]
     };
+    (function _loadCostOverrides() {
+        try {
+            // Chave de contexto: mundo + mercado + idioma para calibração precisa
+            var _wId    = (typeof game_data !== 'undefined' && game_data.world)
+                ? game_data.world
+                : window.location.hostname.replace(/[^a-z0-9]/gi, '_');
+            var _market = (typeof game_data !== 'undefined' && game_data.market) || 'unk';
+            var _lang   = (document.documentElement.lang || navigator.language || 'unk').split('-')[0].toLowerCase();
+            var _ctxKey = (_wId + '_' + _market + '_' + _lang).replace(/[^a-z0-9_]/gi, '_');
+
+            // 1. Custos auto-calibrados por contexto (scraping DOM) — prioridade base
+            var scrapedRaw = GM_getValue('twbot_costs_data_' + _ctxKey, null);
+            if (scrapedRaw) {
+                var scrapedData = typeof scrapedRaw === 'string' ? JSON.parse(scrapedRaw) : scrapedRaw;
+                for (var bs in scrapedData) {
+                    if (Array.isArray(scrapedData[bs])) TW_BUILDING_COSTS[bs] = scrapedData[bs];
+                }
+                log('[costs] Custos calibrados para contexto "' + _ctxKey + '" carregados', 'info');
+            }
+
+            // 2. Overrides manuais sobrescrevem tudo (maior prioridade)
+            var raw = GM_getValue('twbot_costs_override', null);
+            if (!raw) return;
+            var overrides = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            var applied = [];
+            for (var b in overrides) {
+                if (Array.isArray(overrides[b]) && overrides[b].length >= 3) {
+                    TW_BUILDING_COSTS[b] = overrides[b];
+                    applied.push(b);
+                }
+            }
+            if (applied.length) log('[costs] Overrides manuais aplicados: ' + applied.join(', '), 'info');
+        } catch (e) { log('[costs] Erro ao carregar overrides: ' + e.message, 'warning'); }
+    })();
+
+    // Chave de contexto para calibração de custos por mundo + mercado + idioma
+    function getCostContextKey(worldId) {
+        var market = 'unk';
+        var lang   = 'unk';
+        try {
+            market = (typeof game_data !== 'undefined' && game_data.market) || 'unk';
+            lang   = (document.documentElement.lang || navigator.language || 'unk').split('-')[0].toLowerCase();
+        } catch(e) {}
+        return (worldId + '_' + market + '_' + lang).replace(/[^a-z0-9_]/gi, '_');
+    }
 
     // Fatores de peso estratégico por fase e tipo de edifício
     const STRATEGIC_WEIGHT = {
-        EARLY: { wood: 1.2, stone: 1.1, iron: 0.8, farm: 1.3, storage: 1.0, main: 1.5, barracks: 1.0, smith: 1.0, statue: 0.9, market: 0.7, stable: 0.6, wall: 0.8, place: 0.5, hide: 0.4, church: 0.3, watchtower: 0.3, garage: 0.2, snob: 0.1 },
+        EARLY: { wood: 1.8, stone: 1.8, iron: 1.4, farm: 1.6, storage: 1.1, main: 0.7, barracks: 1.0, smith: 2.2, statue: 1.2, market: 1.7, stable: 2.0, wall: 0.4, place: 0.5, hide: 0.3, church: 0.3, watchtower: 0.3, garage: 0.2, snob: 0.1 },
         MID:   { wood: 1.0, stone: 1.0, iron: 1.1, farm: 1.1, storage: 1.0, main: 1.8, barracks: 1.1, smith: 1.2, statue: 1.0, market: 0.9, stable: 1.3, wall: 1.1, place: 0.6, hide: 0.5, church: 0.7, watchtower: 0.6, garage: 0.8, snob: 0.3 },
         LATE:  { wood: 0.8, stone: 0.8, iron: 1.2, farm: 0.9, storage: 0.9, main: 2.0, barracks: 1.0, smith: 1.3, statue: 1.1, market: 1.0, stable: 1.2, wall: 1.3, place: 0.7, hide: 0.6, church: 0.9, watchtower: 0.8, garage: 1.0, snob: 1.5 }
     };
 
     // Bônus do HQ como multiplicador de produtividade (acelera TODAS as construções)
     const HQ_PRODUCTIVITY_BONUS = {
-        1: 0.00, 2: 0.02, 3: 0.04, 4: 0.06, 5: 0.08,  // +8% aos 5
-        6: 0.10, 7: 0.12, 8: 0.14, 9: 0.16, 10: 0.20, // +20% aos 10 (marco hq_mid)
-        11: 0.22, 12: 0.24, 13: 0.26, 14: 0.28, 15: 0.30,
-        16: 0.32, 17: 0.34, 18: 0.36, 19: 0.38, 20: 0.40,
-        21: 0.42, 22: 0.44, 23: 0.46, 24: 0.48, 25: 0.50  // +50% no máximo
+        1: 0.04, 2: 0.08, 3: 0.12, 4: 0.16, 5: 0.21,  // +21% aos 5 — rush early agressivo
+        6: 0.25, 7: 0.28, 8: 0.31, 9: 0.34, 10: 0.38, // +38% aos 10 (marco hq_mid)
+        11: 0.41, 12: 0.44, 13: 0.47, 14: 0.50, 15: 0.53,
+        16: 0.55, 17: 0.57, 18: 0.59, 19: 0.61, 20: 0.63,
+        21: 0.65, 22: 0.67, 23: 0.68, 24: 0.69, 25: 0.70  // +70% no máximo
     };
 
     // Perfis de jogador (configurável via GM_setValue)
@@ -228,7 +332,7 @@
         COOLDOWNS: {
             BUILD_FAIL: 300000,      // 5 minutos após falha de construção
             TARGET_BLOCK: 600000,    // 10 minutos para targets problemáticos
-            ACTION_LOCK: 3000,       // 3 segundos entre ações
+            ACTION_LOCK: 30000,      // 30 segundos — TTL de segurança do lock (expira sozinho após crash/reload)
             SOFT_RESET: 1800000      // 30 minutos para reset suave
         },
 
@@ -240,19 +344,31 @@
             BALANCED: 'balanced'     // Equilibrado
         },
 
+        // Desserializa valor que pode ter sido salvo como JSON string
+        _load: function(key, fallback) {
+            var v = GM_getValue(key, null);
+            if (v === null || v === undefined) return fallback;
+            if (typeof v === 'string') {
+                try { return JSON.parse(v); } catch (e) { return fallback; }
+            }
+            return v;
+        },
+
         // Obter memória completa de uma aldeia
         get: function(villageId) {
+            var lockVal = GM_getValue(this.KEYS.actionLock + villageId, 0);
             return {
-                lastTarget: GM_getValue(this.KEYS.lastTarget + villageId, null),
-                lastSuccess: GM_getValue(this.KEYS.lastSuccess + villageId, null),
-                lastError: GM_getValue(this.KEYS.lastError + villageId, null),
-                cooldownUntil: GM_getValue(this.KEYS.cooldownUntil + villageId, 0),
-                previousBottleneck: GM_getValue(this.KEYS.previousBottleneck + villageId, null),
-                currentMilestone: GM_getValue(this.KEYS.currentMilestone + villageId, null),
-                consecutiveFails: GM_getValue(this.KEYS.consecutiveFails + villageId, 0),
-                blockedTargets: GM_getValue(this.KEYS.blockedTargets + villageId, {}),
-                actionLock: GM_getValue(this.KEYS.actionLock + villageId, false),
-                profile: GM_getValue(this.KEYS.villageProfile + villageId, this.PROFILES.BALANCED)
+                lastTarget:          GM_getValue(this.KEYS.lastTarget          + villageId, null),
+                lastSuccess:         GM_getValue(this.KEYS.lastSuccess         + villageId, null),
+                lastError:           this._load(this.KEYS.lastError            + villageId, null),
+                cooldownUntil:       GM_getValue(this.KEYS.cooldownUntil       + villageId, 0),
+                previousBottleneck:  GM_getValue(this.KEYS.previousBottleneck  + villageId, null),
+                currentMilestone:    GM_getValue(this.KEYS.currentMilestone    + villageId, null),
+                consecutiveFails:    GM_getValue(this.KEYS.consecutiveFails    + villageId, 0),
+                blockedTargets:      this._load(this.KEYS.blockedTargets        + villageId, {}),
+                // actionLock armazena timestamp de expiração (0 = livre)
+                actionLock:          (typeof lockVal === 'number' ? lockVal : (lockVal ? Date.now() + VillageMemory.COOLDOWNS.ACTION_LOCK : 0)),
+                profile:             GM_getValue(this.KEYS.villageProfile      + villageId, this.PROFILES.BALANCED)
             };
         },
 
@@ -283,8 +399,9 @@
         // Atualizar campo específico
         set: function(villageId, field, value) {
             var key = this.KEYS[field] + villageId;
-            GM_setValue(key, value);
-            log('[memória] ' + field + ' = ' + JSON.stringify(value), 'info');
+            // Serialização explícita para compatibilidade com Greasemonkey/Violentmonkey
+            var toStore = (value !== null && typeof value === 'object') ? JSON.stringify(value) : value;
+            GM_setValue(key, toStore);
         },
 
         // Registrar ação bem-sucedida
@@ -299,14 +416,16 @@
         // Registrar falha
         recordError: function(villageId, target, errorType) {
             var mem = this.get(villageId);
-            var fails = (mem.consecutiveFails || 0) + 1;
-
             this.set(villageId, 'lastError', { target: target, type: errorType, time: Date.now() });
-            this.set(villageId, 'consecutiveFails', fails);
-            this.set(villageId, 'cooldownUntil', Date.now() + this.COOLDOWNS.BUILD_FAIL);
             this.set(villageId, 'actionLock', false);
 
-            // Bloquear target problemático se falhas consecutivas >= 2
+            // no_resources = recursos insuficientes, não é falha real do servidor — não bloqueia target
+            if (errorType === 'no_resources') return;
+
+            var fails = (mem.consecutiveFails || 0) + 1;
+            this.set(villageId, 'consecutiveFails', fails);
+            this.set(villageId, 'cooldownUntil', Date.now() + this.COOLDOWNS.BUILD_FAIL);
+
             if (fails >= 2 && target) {
                 this.blockTarget(villageId, target, this.COOLDOWNS.TARGET_BLOCK);
             }
@@ -323,6 +442,13 @@
             log('[memória] Target bloqueado: ' + target, 'warning');
         },
 
+        // Limpar bloqueios e contagem de falhas (use no console ou ao detectar falso positivo)
+        resetBlockedTargets: function(villageId) {
+            GM_setValue('village_blocked_targets_' + villageId, '{}');
+            GM_setValue('village_consecutive_fails_' + villageId, 0);
+            log('[memória] Bloqueios e falhas resetados para aldeia ' + villageId, 'success');
+        },
+
         // Verificar se target está bloqueado
         isTargetBlocked: function(villageId, target) {
             var mem = this.get(villageId);
@@ -330,27 +456,33 @@
             if (blocked[target] && Date.now() < blocked[target]) {
                 return true;
             }
-            // Limpar expired
+            // Limpar expirados — usa cópia para comparação correta de tamanho
+            var originalLength = Object.keys(blocked).length;
             for (var t in blocked) {
                 if (Date.now() >= blocked[t]) {
                     delete blocked[t];
                 }
             }
-            if (Object.keys(blocked).length < (mem.blockedTargets ? Object.keys(mem.blockedTargets).length : 0)) {
+            if (Object.keys(blocked).length < originalLength) {
                 this.set(villageId, 'blockedTargets', blocked);
             }
             return false;
         },
 
-        // Verificar se pode executar ação (actionLock + cooldown)
+        // Verificar se pode executar ação (actionLock com TTL + cooldown)
         canAct: function(villageId) {
             var mem = this.get(villageId);
             var now = Date.now();
 
-            // Verificar actionLock
-            if (mem.actionLock) {
-                log('[memória] ActionLock ativo', 'warning');
+            // actionLock é um timestamp de expiração: 0 = livre, >now = travado
+            if (mem.actionLock && now < mem.actionLock) {
+                log('[memória] ActionLock ativo por mais ' + Math.round((mem.actionLock - now)/1000) + 's', 'warning');
                 return false;
+            }
+
+            // Lock expirado — limpa automaticamente (proteção contra travamento por reload)
+            if (mem.actionLock && now >= mem.actionLock) {
+                GM_setValue(this.KEYS.actionLock + villageId, 0);
             }
 
             // Verificar cooldown global
@@ -362,10 +494,10 @@
             return true;
         },
 
-        // Adquirir lock de ação
+        // Adquirir lock de ação (TTL = COOLDOWNS.ACTION_LOCK — expira sozinho se a página recarregar)
         acquireLock: function(villageId) {
             if (this.canAct(villageId)) {
-                this.set(villageId, 'actionLock', true);
+                GM_setValue(this.KEYS.actionLock + villageId, Date.now() + this.COOLDOWNS.ACTION_LOCK);
                 return true;
             }
             return false;
@@ -373,7 +505,7 @@
 
         // Liberar lock de ação
         releaseLock: function(villageId) {
-            this.set(villageId, 'actionLock', false);
+            GM_setValue(this.KEYS.actionLock + villageId, 0);
         },
 
         // Verificar se deve mudar de estratégia (muitas falhas)
@@ -389,6 +521,8 @@
                 this.set(villageId, 'consecutiveFails', 0);
                 this.set(villageId, 'blockedTargets', {});
                 this.set(villageId, 'cooldownUntil', 0);
+                // FIX: atualiza lastSuccess para evitar re-trigger a cada ciclo (loop infinito)
+                this.set(villageId, 'lastSuccess', Date.now());
                 log('[memória] Soft reset aplicado', 'warning');
                 return true;
             }
@@ -408,13 +542,26 @@
     }
 
     function getScreenParam() { return new URL(window.location.href).searchParams.get('screen') || ''; }
-    function getVillageIdParam() { return new URL(window.location.href).searchParams.get('village') || ''; }
+    function getVillageIdParam() {
+        var id = new URL(window.location.href).searchParams.get('village');
+        return (id && /^\d+$/.test(id)) ? id : null;
+    }
     function getVillagePoints() {
         try { return parseInt((typeof game_data !== 'undefined' && game_data.village && game_data.village.points) || 0) || 0; } catch (e) { return 0; }
     }
     function getGamePhase(pts) { return pts < 500 ? 'EARLY' : pts < 5000 ? 'MID' : 'LATE'; }
     function getCurrentVillageId() {
-        return getVillageIdParam() || (typeof game_data !== 'undefined' && game_data.village ? String(game_data.village.id) : null);
+        return getVillageIdParam()
+            || (typeof game_data !== 'undefined' && game_data.village && game_data.village.id
+                ? String(game_data.village.id)
+                : null);
+    }
+    // Canonicaliza qualquer forma de ID (número, string, undefined) para string numérica ou null.
+    // Todas as funções públicas devem chamar isso na entrada.
+    function normalizeVillageId(id) {
+        if (id === null || id === undefined || id === '') return null;
+        var s = String(id).trim();
+        return /^\d+$/.test(s) ? s : null;
     }
 
     // ============================================================
@@ -427,24 +574,28 @@
         if (useCache !== false) {
             var cached = RequestCache.get('gmGet:' + url);
             if (cached) {
-                log('[gmGet] Cache hit para ' + url.substring(0, 50), 'info');
                 return Promise.resolve(cached);
             }
         }
 
-        return new Promise(function (resolve, reject) {
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: url.startsWith('http') ? url : window.location.origin + url,
-                headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                onload: function (r) {
-                    // Armazena no cache se sucesso
-                    if (useCache !== false) {
-                        RequestCache.set('gmGet:' + url, r.responseText);
-                    }
-                    resolve(r.responseText);
-                },
-                onerror: function () { reject(new Error('GET falhou: ' + url)); },
+        return RateLimiter.acquire().then(function() {
+            return new Promise(function (resolve, reject) {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: url.startsWith('http') ? url : window.location.origin + url,
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    onload: function (r) {
+                        RateLimiter.release();
+                        if (useCache !== false) {
+                            RequestCache.set('gmGet:' + url, r.responseText);
+                        }
+                        resolve(r.responseText);
+                    },
+                    onerror: function () {
+                        RateLimiter.release();
+                        reject(new Error('GET falhou: ' + url));
+                    },
+                });
             });
         });
     }
@@ -463,63 +614,65 @@
     }
 
     // fetch nativo do navegador — usa as cookies da sessao sem restricoes de @connect
-    // Com rate limiting e cache opcional
+    // Com rate limiting (slot adquirido antes do disparo) e debounce por tempo real entre disparos
     var twFetchLastCall = 0;
 
     function twFetch(url, method, body, useCache) {
-        // Verifica cache para GET requests
+        // Verifica cache para GET requests (retorna imediatamente, sem consumir slot)
         if (method === 'GET' && useCache !== false) {
             var cached = RequestCache.get('twFetch:' + url + ':' + (body || ''));
-            if (cached) {
-                log('[twFetch] Cache hit para ' + url.substring(0, 50), 'info');
-                return Promise.resolve(cached);
+            if (cached) return Promise.resolve(cached);
+        }
+
+        return RateLimiter.acquire().then(function() {
+            // Debounce calculado no momento do disparo real (não no enfileiramento)
+            var now = Date.now();
+            var debounceNeeded = CONFIG.requestDebounceMs - (now - twFetchLastCall);
+            twFetchLastCall = now;
+
+            var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+            var opts = {
+                method: method || 'GET',
+                credentials: 'include',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json, text/javascript, */*; q=0.01'
+                },
+            };
+            if (body) {
+                opts.headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+                opts.body = body;
             }
-        }
 
-        // Debounce entre requisições para evitar sobrecarga
-        var now = Date.now();
-        var timeSinceLastCall = now - twFetchLastCall;
-        var debounceNeeded = CONFIG.requestDebounceMs - timeSinceLastCall;
+            var dispatch = function() {
+                return win.fetch(url, opts).then(function(r) {
+                    return r.text().then(function(text) {
+                        RateLimiter.release();
+                        // Status 500 com redirect é resposta normal do TW para algumas ações AJAX
+                        // (confirma execução e pede redirecionamento de tela) — não é erro fatal
+                        if (r.status === 500 && text.indexOf('"redirect"') !== -1) {
+                            return text;
+                        }
+                        if (method === 'GET' && useCache !== false && r.status === 200) {
+                            RequestCache.set('twFetch:' + url + ':' + (body || ''), text);
+                        }
+                        return text;
+                    }, function(textErr) {
+                        RateLimiter.release();
+                        throw textErr;
+                    });
+                }, function(fetchErr) {
+                    RateLimiter.release();
+                    log('[twFetch] ERRO: ' + fetchErr.message, 'error');
+                    throw fetchErr;
+                });
+            };
 
-        twFetchLastCall = now;
-
-        var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
-        var opts = {
-            method: method || 'GET',
-            credentials: 'include',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': 'application/json, text/javascript, */*; q=0.01'
-            },
-        };
-        if (body) {
-            opts.headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
-            opts.body = body;
-        }
-
-        log('[twFetch] ' + method + ' → ' + url.substring(0, 100) + (body ? ' | Body: ' + body.substring(0, 50) : ''), 'info');
-
-        var fetchPromise = win.fetch(url, opts).then(function (r) {
-            log('[twFetch] Status: ' + r.status + ' ' + r.statusText, 'info');
-            return r.text().then(function(text) {
-                // Armazena no cache para GET requests bem-sucedidos
-                if (method === 'GET' && useCache !== false && r.status === 200) {
-                    RequestCache.set('twFetch:' + url + ':' + (body || ''), text);
-                }
-                return text;
-            });
-        }).catch(function(err) {
-            log('[twFetch] ERRO: ' + err.message, 'error');
-            throw err;
+            if (debounceNeeded > 0) {
+                return new Promise(function(resolve) { setTimeout(resolve, debounceNeeded); }).then(dispatch);
+            }
+            return dispatch();
         });
-
-        // Aplica debounce se necessário
-        if (debounceNeeded > 0) {
-            log('[twFetch] Aguardando ' + debounceNeeded + 'ms (debounce)', 'info');
-            return new Promise(resolve => setTimeout(resolve, debounceNeeded)).then(() => fetchPromise);
-        }
-
-        return fetchPromise;
     }
 
     // ============================================================
@@ -533,6 +686,8 @@
     // ============================================================
     var HUD = {
         el: null, minimized: false,
+        obsMode: GM_getValue('tw_obs_mode', false),
+        obsReport: null,
 
         info: {
             fase: 'Calculando...',
@@ -548,38 +703,82 @@
             build_general: { label: 'Obras', status: 'idle', detail: '' }
         },
 
+        toggleObsMode: function () {
+            this.obsMode = !this.obsMode;
+            CONFIG.observationMode = this.obsMode;
+            GM_setValue('tw_obs_mode', this.obsMode);
+            this._rerender();
+        },
+
+        showObsReport: function (report) {
+            this.obsReport = report;
+            this._rerender();
+        },
+
         init: function () {
             if (this.el) this.el.remove();
             this.minimized = GM_getValue('tw_hud_min', false);
             var el = document.createElement('div');
             el.id = 'tw-bot-hud';
-            el.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#121417;color:#ecf0f1;border-radius:10px;font-family:sans-serif;font-size:12px;z-index:99999;box-shadow:0 0 25px rgba(0,0,0,.9);border:1px solid #f39c12;min-width:280px;user-select:none;transition:all .3s;line-height:1.4;';
+            el.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#121417;color:#ecf0f1;border-radius:10px;font-family:sans-serif;font-size:12px;z-index:99999;box-shadow:0 0 25px rgba(0,0,0,.9);border:1px solid #f39c12;min-width:290px;user-select:none;transition:all .3s;line-height:1.4;';
             el.innerHTML = this._html();
             document.body.appendChild(el);
             this.el = el;
             el.querySelector('#tw-hud-toggle').onclick = () => { this.minimized = !this.minimized; GM_setValue('tw_hud_min', this.minimized); this._rerender(); };
+            el.querySelector('#tw-hud-obs-toggle').onclick = (e) => { e.stopPropagation(); this.toggleObsMode(); };
         },
 
         _html: function () {
-            var hdr = '<div id="tw-hud-toggle" style="padding:10px;cursor:pointer;color:#f39c12;font-weight:bold;background:#1a1c20;border-bottom:1px solid #333;display:flex;justify-content:space-between;border-top-left-radius:10px;border-top-right-radius:10px;">'
-                    + '<span>⚔️ Agente Gerencial TW</span><span>' + (this.minimized ? '[ + ]' : '[ — ]') + '</span></div>';
+            var obsBtnStyle = 'cursor:pointer;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:bold;margin-right:6px;'
+                + (this.obsMode
+                    ? 'background:#c0392b;color:#fff;'
+                    : 'background:#2c3e50;color:#7f8c8d;');
+            var obsBtn = '<span id="tw-hud-obs-toggle" style="' + obsBtnStyle + '">' + (this.obsMode ? '👁 OBS' : '▶ LIVE') + '</span>';
+            var hdr = '<div id="tw-hud-toggle" style="padding:10px;cursor:pointer;color:#f39c12;font-weight:bold;background:#1a1c20;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;border-top-left-radius:10px;border-top-right-radius:10px;">'
+                    + '<span>⚔️ Agente Gerencial TW</span>'
+                    + '<div style="display:flex;align-items:center;">' + obsBtn + '<span>' + (this.minimized ? '[ + ]' : '[ — ]') + '</span></div>'
+                    + '</div>';
 
             if (this.minimized) return hdr;
 
-            // Bloco Gerencial (Topo)
             var rows = '<div style="padding: 10px;">';
-            rows += '<div style="background:#1a1c20; padding:8px; border-radius:6px; margin-bottom:10px; border:1px solid #333;">';
-            rows += '<div style="font-size:11px; color:#f39c12; font-weight:bold; margin-bottom:6px;">📊 VISÃO ESTRATÉGICA</div>';
-            rows += this._buildDataRow('Fase:', this.info.fase, '#bdc3c7');
-            rows += this._buildDataRow('Gargalo:', this.info.gargalo, '#e74c3c');
-            rows += '<div style="margin-top:6px; padding-top:6px; border-top:1px dashed #333;"></div>';
-            rows += this._buildDataRow('Meta Atual:', this.info.meta, '#3498db');
-            rows += this._buildDataRow('Alvo de Fila:', this.info.acao, '#2ecc71');
-            rows += '<div style="background:#202225; padding:6px; border-radius:5px; font-family:monospace; font-size:10.5px; color:#a29bfe; margin-top:8px;">'
-                 + '💡 <b>Razão:</b> ' + this.info.motivo
-                 + '</div></div>';
 
-            // Bloco Operacional (Baixo)
+            // ── Bloco de Observação (quando modo ativo) ──
+            if (this.obsMode) {
+                var r = this.obsReport;
+                rows += '<div style="background:#1a0505;padding:8px;border-radius:6px;margin-bottom:10px;border:1px solid #c0392b;">';
+                rows += '<div style="font-size:11px;color:#e74c3c;font-weight:bold;margin-bottom:8px;">👁 MODO OBSERVAÇÃO — SEM EXECUÇÃO</div>';
+                rows += this._buildDataRow('Fase:', this.info.fase, '#bdc3c7');
+                rows += this._buildDataRow('Gargalo:', this.info.gargalo, '#e74c3c');
+                rows += this._buildDataRow('Meta:', this.info.meta, '#3498db');
+                if (r) {
+                    rows += '<div style="margin-top:6px;padding-top:6px;border-top:1px dashed #333;"></div>';
+                    rows += this._buildDataRow('Próxima ação:', (r.alvo || '—') + (r.nivel ? ' Nv.' + r.nivel : ''), '#2ecc71');
+                    var confColor = r.confianca >= 80 ? '#2ecc71' : r.confianca >= 60 ? '#f39c12' : '#e74c3c';
+                    rows += '<div style="background:#2c3e50;border-radius:3px;height:5px;margin:5px 0;overflow:hidden;">'
+                         +  '<div style="background:' + confColor + ';height:100%;width:' + r.confianca + '%;"></div></div>';
+                    rows += '<div style="text-align:right;font-size:10px;color:' + confColor + ';margin-bottom:4px;">Confiança: ' + r.confianca + '%</div>';
+                    if (r.alternativa) rows += this._buildDataRow('Alternativa:', r.alternativa + (r.altNivel ? ' Nv.' + r.altNivel : ''), '#7f8c8d');
+                    rows += '<div style="background:#202225;padding:5px;border-radius:4px;font-family:monospace;font-size:10px;color:#a29bfe;margin-top:4px;">💡 ' + (r.razao || this.info.motivo) + '</div>';
+                } else {
+                    rows += '<div style="color:#7f8c8d;font-size:10px;margin-top:4px;">Aguardando próximo ciclo de análise...</div>';
+                }
+                rows += '</div>';
+            } else {
+                // ── Bloco Gerencial normal ──
+                rows += '<div style="background:#1a1c20; padding:8px; border-radius:6px; margin-bottom:10px; border:1px solid #333;">';
+                rows += '<div style="font-size:11px; color:#f39c12; font-weight:bold; margin-bottom:6px;">📊 VISÃO ESTRATÉGICA</div>';
+                rows += this._buildDataRow('Fase:', this.info.fase, '#bdc3c7');
+                rows += this._buildDataRow('Gargalo:', this.info.gargalo, '#e74c3c');
+                rows += '<div style="margin-top:6px; padding-top:6px; border-top:1px dashed #333;"></div>';
+                rows += this._buildDataRow('Meta Atual:', this.info.meta, '#3498db');
+                rows += this._buildDataRow('Alvo de Fila:', this.info.acao, '#2ecc71');
+                rows += '<div style="background:#202225; padding:6px; border-radius:5px; font-family:monospace; font-size:10.5px; color:#a29bfe; margin-top:8px;">'
+                     + '💡 <b>Razão:</b> ' + this.info.motivo
+                     + '</div></div>';
+            }
+
+            // ── Bloco Operacional ──
             rows += '<div style="background:#1a1c20; padding:8px; border-radius:6px; border:1px solid #333;">';
             rows += '<div style="font-size:11px; color:#f39c12; font-weight:bold; margin-bottom:6px;">🔧 STATUS OPERACIONAL</div>';
             for (var taskId in this.tasks) {
@@ -726,13 +925,64 @@
         return flags.slice().sort(function (a, b) { return scoreFlagLocal(b, phase) - scoreFlagLocal(a, phase); })[0];
     }
 
+    // Scoring estratégico: perfil > fase > milestone > situação econômica
+    // ctx: { profile, phase, milestoneId, taxaPop, riscoArmazem, recursosPercent }
+    function scoreFlagStrategic(flag, ctx) {
+        ctx = ctx || {};
+        var profile = ctx.profile || 'balanced';
+        var phase   = ctx.phase   || 'MID';
+
+        // 1. Base: peso do perfil da aldeia
+        var profileW = CATEGORY_PRIORITY_BY_PROFILE[profile] || CATEGORY_PRIORITY_BY_PROFILE.balanced;
+        var score = profileW[flag.category] || 0;
+
+        // 2. Modulação por fase (efeito secundário ±20%)
+        var phaseW = CATEGORY_PRIORITY[phase] || CATEGORY_PRIORITY.MID;
+        score = score * (0.80 + 0.20 * ((phaseW[flag.category] || 0) / 100));
+
+        // 3. Bônus de nível (idêntico ao original)
+        score += flag.level * 3;
+
+        // 4. Alinhamento com milestone ativo
+        var milId = ctx.milestoneId || '';
+        if (milId) {
+            if (/^(eco_base|eco_market|eco_scale|eco_advanced|hq_early|hq_mid)$/.test(milId)) {
+                if (flag.category === 'resource')                                   score += 25;
+            } else if (/^(mil_stable|mil_smith10|mil_barracks10|mil_full)$/.test(milId)) {
+                if (flag.category === 'attack' || flag.category === 'recruitment') score += 30;
+            } else if (/^(sup_wall10|sup_wall20|mil_wall)$/.test(milId)) {
+                if (flag.category === 'defense')                                   score += 25;
+            } else if (/^noble_prep$/.test(milId)) {
+                if (flag.category === 'loot' || flag.category === 'resource')      score += 20;
+            } else if (/^(unlock_statue|sup_church|sup_storage)$/.test(milId)) {
+                if (flag.category === 'population')                                score += 15;
+            }
+        }
+
+        // 5. Situação econômica
+        if (flag.category === 'resource') {
+            if (ctx.riscoArmazem) score -= 30; // overflow: mais produção é desperdício
+            var pct = ctx.recursosPercent || {};
+            var avgFill = ((pct.wood || 0) + (pct.stone || 0) + (pct.iron || 0)) / 3;
+            if (avgFill > 0.85) score -= 20;   // storage muito cheio
+            if (avgFill < 0.25) score += 20;   // storage vazio — recurso urgente
+        }
+        if (flag.category === 'population') {
+            var taxaPop = ctx.taxaPop || 0;
+            if (taxaPop >= 0.92)      score += 40; // pop crítica: desbloquear slots urgente
+            else if (taxaPop >= 0.82) score += 20;
+        }
+
+        return score;
+    }
+
     // ============================================================
     // BACKGROUND: ASSIGN FLAG via AJAX Fantasma
     // 1. Baixa HTML de screen=flags → parseia candidatas por identidade (URL da imagem)
     // 2. Ordena por prioridade de fase, tenta cada uma sequencialmente
     // 3. O servidor diz quem voce possui: erro = pula para proxima, sucesso = para
     // ============================================================
-    function bgAssignFlagGhost(villageId, phase) {
+    function bgAssignFlagGhost(villageId, phase, ctx) {
         var origin   = window.location.origin;
         var flagsUrl = origin + '/game.php?village=' + villageId + '&screen=flags';
         log('[flag] Background: aldeia ' + villageId);
@@ -751,10 +1001,11 @@
             var candidates = parseFlagsFromHtml(html);
             if (!candidates.length) return { ok: false, detail: 'sem_bandeiras' };
 
-            // Ordena por prioridade e limita tentativas para nao sobrecarregar o servidor
+            // Ordena por score estratégico (perfil + milestone + situação) e limita tentativas
             var ph = phase || 'MID';
+            var _ctx = ctx ? Object.assign({ phase: ph }, ctx) : { phase: ph };
             var sorted = candidates.slice()
-                .sort(function (a, b) { return scoreFlagLocal(b, ph) - scoreFlagLocal(a, ph); })
+                .sort(function (a, b) { return scoreFlagStrategic(b, _ctx) - scoreFlagStrategic(a, _ctx); })
                 .slice(0, 20);
 
             log('[flag] ' + sorted.length + ' candidatas ordenadas — tentando em sequencia...');
@@ -992,7 +1243,7 @@
             }
 
             var csrf = extractCsrf(html);
-            return { canRecruit: canRecruit, isPresent: hasKnight, isRecruiting: isRecruit, csrf: csrf, statueExists: statueExists };
+            return { canRecruit: canRecruit, isPresent: hasKnight, isRecruiting: isRecruit, csrf: csrf, statueExists: statueExists, htmlPura: html };
         }
 
         return gmGet(url).then(parseKnightHtml).catch(function (e) {
@@ -1049,7 +1300,10 @@
         return getKnightState(villageId).then(function (state) {
             if (state.isPresent) return true;
             var recruitUrl = window.location.origin + '/game.php?village=' + villageId + '&screen=statue&ajaxaction=recruit';
-            var body = 'home=' + villageId + '&name=Paul&h=' + (state.csrf || game_data.csrf);
+            var _csrfFallback = (typeof unsafeWindow !== 'undefined' && unsafeWindow.game_data)
+                ? unsafeWindow.game_data.csrf
+                : (typeof game_data !== 'undefined' && game_data ? game_data.csrf : '');
+            var body = 'home=' + villageId + '&name=Paul&h=' + (state.csrf || _csrfFallback);
 
             return twFetch(recruitUrl, 'POST', body).then(function (resp) {
                 var json = {};
@@ -1248,50 +1502,165 @@
      * Prioriza leitura direta do HTML da página para precisão
      */
     function extractCosts(buildingId, mainDoc, fallbackCosts) {
-        // 1. Tentar extrair da tabela de construção (estrutura padrão TW)
-        // Seletor robusto para a linha da tabela de edifícios
-        var rowSelector = '#main_buildrow_' + buildingId + ', tr[data-building="' + buildingId + '"]';
-        var row = mainDoc.querySelector(rowSelector);
+        // 1. Linha canônica TW: #main_buildrow_{id}
+        var row = mainDoc.querySelector('#main_buildrow_' + buildingId)
+                || mainDoc.querySelector('tr[data-building="' + buildingId + '"]');
 
         if (row) {
-            // Extrai das colunas padrão: madeira(2), pedra(3), ferro(4)
-            var getCellVal = function(idx) {
-                var cell = row.querySelector('td:nth-of-type(' + idx + ')');
-                if (!cell) return 0;
-                var txt = (cell.textContent || cell.innerText || '').trim();
-                // Remove pontos de milhar e extrai apenas números
-                txt = txt.replace(/\./g, '').replace(/[^0-9]/g, '');
-                return parseInt(txt) || 0;
+            var tds = row.querySelectorAll('td');
+            // TW layout: td[0]=nome td[1]=madeira td[2]=pedra td[3]=ferro td[4]=pop td[5]=tempo
+            var parse = function(n) {
+                var el = tds[n];
+                if (!el) return 0;
+                return parseInt((el.innerText || el.textContent || '').replace(/\./g, '').replace(/\D/g, '')) || 0;
             };
-
-            var wood = getCellVal(2);
-            var stone = getCellVal(3);
-            var iron = getCellVal(4);
-
+            var wood  = parse(1);
+            var stone = parse(2);
+            var iron  = parse(3);
             if (wood > 0 || stone > 0 || iron > 0) {
-                log('[DOM Costs] ' + buildingId + ': W=' + wood + ', S=' + stone + ', I=' + iron);
                 return { wood: wood, stone: stone, iron: iron, fromDOM: true };
             }
         }
 
-        // 2. Tentar extrair do tooltip ou elemento de custo no DOM
+        // 2. Tooltip / elemento .costs
         var costEl = mainDoc.querySelector('#building_' + buildingId + ' .costs, .building-' + buildingId + ' .costs');
         if (costEl) {
             var text = costEl.textContent || costEl.innerText;
-            var wood = parseInt(text.match(/(\d+)\s*madeira/i)?.[1] || text.match(/(\d+)\s*wood/i)?.[1] || '0');
-            var stone = parseInt(text.match(/(\d+)\s*pedra/i)?.[1] || text.match(/(\d+)\s*stone/i)?.[1] || '0');
-            var iron = parseInt(text.match(/(\d+)\s*ferro/i)?.[1] || text.match(/(\d+)\s*iron/i)?.[1] || '0');
+            var wood  = parseInt((text.match(/(\d[\d.]*)\s*(?:madeira|wood)/i)  || [])[1] || 0) || 0;
+            var stone = parseInt((text.match(/(\d[\d.]*)\s*(?:pedra|stone)/i)   || [])[1] || 0) || 0;
+            var iron  = parseInt((text.match(/(\d[\d.]*)\s*(?:ferro|iron)/i)    || [])[1] || 0) || 0;
             if (wood > 0 || stone > 0 || iron > 0) {
                 return { wood: wood, stone: stone, iron: iron, fromDOM: true };
             }
         }
 
-        // 3. Fallback: usar tabela de custos com progressão por nível
+        // 3. Fallback: tabela estática TW_BUILDING_COSTS (sem fromDOM)
         if (fallbackCosts) {
             return { wood: fallbackCosts[0], stone: fallbackCosts[1], iron: fallbackCosts[2], time: fallbackCosts[3], fromDOM: false };
         }
 
         return null;
+    }
+
+    /**
+     * Scraping automático de custos reais do mundo a partir do DOM de screen=main.
+     * Chave de contexto: mundo + mercado + idioma. Revalida em 4 condições:
+     * TTL 24h, mudança de contexto, confiança média < 40%, flag de revalidação forçada.
+     * Overrides manuais (setCostOverride) nunca são sobrescritos.
+     */
+    function scrapeBuildingCostsFromDOM(mainDoc, villageLevels, worldId) {
+        var ctxKey     = getCostContextKey(worldId);
+        var SCRAPE_KEY = 'twbot_costs_scraped_' + ctxKey;
+        var CONF_KEY   = 'twbot_cost_confidence_' + ctxKey;
+        var DATA_KEY   = 'twbot_costs_data_' + ctxKey;
+        var SCRAPE_TTL = 86400000; // 24 horas
+
+        // Condição 1: contexto mudou (mundo, mercado ou idioma diferentes)
+        var lastCtx    = GM_getValue('twbot_cost_context', '');
+        var ctxChanged = lastCtx !== ctxKey;
+
+        // Condição 2: confiança média abaixo do limiar (maioria dos custos veio de fallback estático)
+        var conf = {};
+        try { conf = JSON.parse(GM_getValue(CONF_KEY, null) || '{}'); } catch(e) {}
+        var confKeys = Object.keys(conf);
+        var avgConf  = confKeys.length > 0
+            ? confKeys.reduce(function(s, k) { return s + (conf[k].score || 0); }, 0) / confKeys.length
+            : 0;
+
+        // Condição 3: flag de revalidação forçada (delta de custo detectado, mudança externa, etc.)
+        var forceFlag = GM_getValue('twbot_force_rescrape', 0);
+
+        var needsScrape = ctxChanged
+            || forceFlag
+            || (Date.now() - GM_getValue(SCRAPE_KEY, 0) >= SCRAPE_TTL)
+            || (confKeys.length > 0 && avgConf < 40);
+
+        if (!needsScrape) return;
+        if (forceFlag) GM_setValue('twbot_force_rescrape', 0); // consumir flag
+
+        var GROWTH_RES  = 1.5;
+        var GROWTH_TIME = 1.1;
+        var scraped = {};
+
+        Object.keys(TW_BUILDING_COSTS).forEach(function(bId) {
+            var currentLevel = parseInt(villageLevels[bId] || 0);
+            if (currentLevel < 1) return;
+
+            var row = mainDoc.querySelector(
+                '#main_buildrow_' + bId + ', tr[data-building="' + bId + '"], tr#buildrow_' + bId
+            );
+            if (!row) return;
+
+            var getCellNum = function(idx) {
+                var cell = row.querySelector('td:nth-of-type(' + idx + ')');
+                if (!cell) return 0;
+                return parseInt((cell.textContent || '').trim().replace(/\./g, '').replace(/[^0-9]/g, '')) || 0;
+            };
+
+            var wood  = getCellNum(2);
+            var stone = getCellNum(3);
+            var iron  = getCellNum(4);
+            if (wood <= 0 && stone <= 0 && iron <= 0) return;
+
+            var timeSec = 0;
+            for (var col = 5; col <= 7; col++) {
+                var t = timeToSeconds(
+                    ((row.querySelector('td:nth-of-type(' + col + ')') || {}).textContent || '').trim()
+                );
+                if (t > 0 && t < 86400) { timeSec = t; break; }
+            }
+
+            // Back-calcular custo base (nível 0→1) a partir do custo observado (nível L→L+1)
+            var factor   = Math.pow(GROWTH_RES, currentLevel);
+            var defaults = TW_BUILDING_COSTS[bId];
+            var baseWood  = wood  > 0 ? Math.max(1, Math.round(wood  / factor)) : defaults[0];
+            var baseStone = stone > 0 ? Math.max(1, Math.round(stone / factor)) : defaults[1];
+            var baseIron  = iron  > 0 ? Math.max(0, Math.round(iron  / factor)) : defaults[2];
+            var baseTime  = timeSec > 0 ? Math.max(10, Math.round(timeSec / Math.pow(GROWTH_TIME, currentLevel))) : defaults[3];
+
+            var sane = function(calc, def) { if (def <= 0) return true; var r = calc / def; return r >= 0.1 && r <= 5.0; };
+            if (!sane(baseWood, defaults[0]) || !sane(baseStone, defaults[1]) || !sane(baseIron, defaults[2])) {
+                log('[costs-scraper] ' + bId + ': base fora do range, ignorado', 'debug');
+                return;
+            }
+
+            scraped[bId] = [baseWood, baseStone, baseIron, baseTime];
+            log('[costs-scraper] ' + bId + ' nv' + currentLevel + ': obs W=' + wood + '/S=' + stone + '/I=' + iron + '/T=' + timeSec + 's → base=[' + [baseWood, baseStone, baseIron, baseTime].join(',') + ']', 'debug');
+        });
+
+        var count = Object.keys(scraped).length;
+        if (count === 0) {
+            log('[costs-scraper] Nenhum custo extraído do DOM (estrutura não reconhecida)', 'warn');
+            return;
+        }
+
+        // Mesclar com overrides manuais sem sobrescrever entradas manuais
+        var stored = {};
+        try {
+            var raw = GM_getValue('twbot_costs_override', null);
+            stored = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {};
+        } catch(e) {}
+        for (var b in scraped) {
+            if (!stored[b]) {
+                stored[b] = scraped[b];
+                TW_BUILDING_COSTS[b] = scraped[b];
+            }
+        }
+
+        // Atualizar confidence scores: cada hit do DOM aumenta confiança (+15, máx. 100)
+        for (var bc in scraped) {
+            if (!conf[bc]) conf[bc] = { score: 0, hits: 0, source: 'dom', ts: 0 };
+            conf[bc].score  = Math.min(100, conf[bc].score + 15);
+            conf[bc].hits++;
+            conf[bc].source = 'dom';
+            conf[bc].ts     = Date.now();
+        }
+
+        GM_setValue(DATA_KEY,  JSON.stringify(scraped));  // custos calibrados por contexto
+        GM_setValue(CONF_KEY,  JSON.stringify(conf));      // confidence scores por edifício
+        GM_setValue(SCRAPE_KEY, Date.now());
+        GM_setValue('twbot_cost_context', ctxKey);        // registrar contexto atual
+        log('[costs-scraper] ' + count + ' custos calibrados para contexto "' + ctxKey + '" | conf. média: ' + Math.round(avgConf) + '%', 'success');
     }
 
     /**
@@ -1315,13 +1684,6 @@
                      (currentStone >= ((costs.stone || 0) * tolerance)) &&
                      (currentIron >= ((costs.iron || 0) * tolerance));
 
-        if (!enough) {
-            log('[executável] ' + buildingId + ' bloqueado: recursos insuficientes', 'warn');
-            log('  Necessário: W=' + (costs.wood||0) + ' S=' + (costs.stone||0) + ' I=' + (costs.iron||0));
-            log('  Disponível: W=' + Math.round(currentWood) + ' S=' + Math.round(currentStone) + ' I=' + Math.round(currentIron));
-            log('  Mínimo aceito (' + Math.round(tolerance*100) + '%): W=' + Math.floor((costs.wood||0)*tolerance) +
-                ' S=' + Math.floor((costs.stone||0)*tolerance) + ' I=' + Math.floor((costs.iron||0)*tolerance));
-        }
         return enough;
     }
 
@@ -1332,171 +1694,43 @@
      * Verifica se o botão de construção está disponível no DOM
      * Agora com detecção aprimorada de edifícios já construídos/em construção
      */
+    // Verifica se um edifício pode ser construído agora com base no HTML do screen=main.
+    // TW usa type=main para TODOS os edifícios — o ID vai no POST body (id=building).
+    // Botões são JS-rendered: nunca há <a href> com ajaxaction no HTML bruto.
+    // Portanto a detecção baseia-se na LINHA DA TABELA #main_buildrow_{id}.
     function isButtonAvailable(buildingId, mainDoc) {
-        // Primeiro verificar se o edifício já está em construção ou construído
-        var buildingRow = mainDoc.querySelector('#building_' + buildingId);
-
-        if (buildingRow) {
-            // Verificar se há indicador de "em construção"
-            var timerEl = buildingRow.querySelector('.timer, .countdown');
-            if (timerEl && timerEl.textContent.trim()) {
-                log('[botão] ' + buildingId + ' já está em construção (timer detectado)', 'info');
-                return false; // Já está na fila
-            }
-
-            // Verificar se há nível máximo atingido
-            var maxLevelIndicator = buildingRow.querySelector('.max-level, .level_max, [data-max-level]');
-            if (maxLevelIndicator) {
-                log('[botão] ' + buildingId + ' já está no nível máximo', 'info');
-                return false;
-            }
+        // --- 1. Linha canônica TW: #main_buildrow_{building} ---
+        var buildRow = mainDoc.querySelector('#main_buildrow_' + buildingId);
+        if (buildRow) {
+            if (buildRow.style.display === 'none' || buildRow.classList.contains('hidden')) return false;
+            var timerEl = buildRow.querySelector('.timer, .countdown, [id*="timer_"]');
+            if (timerEl && timerEl.textContent.trim()) return false;
+            var maxEl = buildRow.querySelector('.max-level, .level_max, .all, [data-max-level], .upgrade-button.all');
+            if (maxEl) return false;
+            return true;
         }
 
-        // Seletores genéricos para todos os edifícios
-        var selectors = [
-            '#building_' + buildingId + ' .upgrade-button:not(.disabled)',
-            '#building_' + buildingId + ' .btn-upgrade:not(.disabled)',
-            '#building_' + buildingId + ' a[href*="ajaxaction=upgrade"]:not(.disabled)',
-            '#building_' + buildingId + ' a[id*="' + buildingId + '_buildlink"]:not(.disabled)',
-            '#building_' + buildingId + ' a[id*="buildlink"]:not(.disabled)',
-            '.building-' + buildingId + ' .upgrade-button:not(.disabled)',
-            '.building-' + buildingId + ' .btn-upgrade:not(.disabled)',
-            '#building_' + buildingId + ' button:not(.disabled)',
-            '.building-' + buildingId + ' button:not(.disabled)',
-            // Novo: procurar na linha da tabela específica
-            'tr[id*="' + buildingId + '_buildrow"] a:not(.disabled)',
-            'tr[id^="' + buildingId + '_buildrow"] a:not(.disabled)',
-            'tr#' + buildingId + '_buildrow_' + buildingId + ' a:not(.disabled)'
-        ];
+        // --- 2. Seletores alternativos: #main_buildlink_{building} ---
+        var buildLink = mainDoc.querySelector(
+            '#main_buildlink_' + buildingId + ':not(.inactive):not(.disabled),' +
+            '#' + buildingId + '_buildlink:not(.inactive):not(.disabled),' +
+            'a[id*="buildlink_' + buildingId + '"]:not(.disabled)'
+        );
+        if (buildLink && !buildLink.hasAttribute('disabled')) return true;
 
-        // Seletores específicos para estátua (pode ter estrutura diferente)
-        if (buildingId === 'statue') {
-            selectors = selectors.concat([
-                '#statue .upgrade-button:not(.disabled)',
-                '#statue .btn-upgrade:not(.disabled)',
-                '#statue a[href*="ajaxaction=upgrade"]:not(.disabled)',
-                '#statue button:not(.disabled)',
-                '[data-building="statue"] .upgrade-button:not(.disabled)',
-                '[data-building="statue"] .btn-upgrade:not(.disabled)',
-                '[data-building="statue"] button:not(.disabled)',
-                '.statue-slot .upgrade-button:not(.disabled)',
-                '.statue-slot .btn-upgrade:not(.disabled)',
-                '.statue-slot button:not(.disabled)',
-                'a.btn-build[data-building="statue"]:not(.disabled)',
-                'button[data-building="statue"]:not(.disabled)',
-                // Novos seletores para diferentes versões do TW
-                '#content_value a.btn[href*="statue"]',
-                '#content_value input[type="button"][value*="statue" i]',
-                'form[action*="statue"] input[type="submit"]',
-                '.statue_container .build_button',
-                '#statue_build_btn'
-            ]);
-
-            // Verificação especial: se estátua já tem nível 1+, não precisa construir
-            var statueLevel = mainDoc.querySelector('.statue_level_1, .statue_level_2, .statue-built, [data-statue-level="1"], [data-statue-level="2"]');
-            if (statueLevel) {
-                log('[botão] Estátua já construída detectada (nível >= 1)!', 'success');
-                return false; // Já construída
-            }
-
-            // Verificar se há slot vazio de estátua (pode construir)
-            var emptySlot = mainDoc.querySelector('.statue-slot-empty, .statue_empty, [data-statue-empty], .empty_statue_slot');
-            if (emptySlot && !statueLevel) {
-                log('[botão] Slot vazio de estátua detectado! Pode construir.', 'success');
-                return true;
-            }
-        }
-
-        for (var sel of selectors) {
-            var btn = mainDoc.querySelector(sel);
-            if (btn) {
-                // Verificar se não está em cooldown ou bloqueado por outra razão
-                var isDisabled = btn.classList.contains('disabled') ||
-                                btn.hasAttribute('disabled') ||
-                                btn.style.pointerEvents === 'none' ||
-                                btn.getAttribute('aria-disabled') === 'true';
-                if (!isDisabled) {
-                    log('[botão] ' + buildingId + ' botão encontrado: ' + sel, 'success');
-                    return true;
-                } else {
-                    log('[botão] ' + buildingId + ' botão encontrado mas DESATIVADO: ' + sel, 'warning');
-                }
-            }
-        }
-
-        // Fallback: procurar por texto do botão na área de conteúdo
-        var contentArea = mainDoc.querySelector('#content_value, td#content_value');
-        if (contentArea) {
-            var allButtons = contentArea.querySelectorAll('input, button, a');
-            for (var i = 0; i < allButtons.length; i++) {
-                var el = allButtons[i];
-                var text = (el.innerText || el.value || '').toLowerCase();
-                // Adicionado 'ausbauen' e 'stufe' para compatibilidade com TW em alemão/europeu
-                if ((text.includes('construir') || text.includes('bauen') || text.includes('build') ||
-                     text.includes('finalizar') || text.includes('ok') || text.includes('ausbauen') ||
-                     text.match(/stufe\s*\d+/)) &&
-                    !el.classList.contains('disabled') &&
-                    !el.hasAttribute('disabled')) {
-                    // Verificar se está relacionado ao edifício atual
-                    var parentBuilding = el.closest('#building_' + buildingId, '[data-building="' + buildingId + '"]');
-                    // Novo: também verifica se o ID do elemento contém o nome do edifício
-                    var idMatch = el.id && el.id.toLowerCase().includes(buildingId);
-                    if (parentBuilding || buildingId === 'statue' || idMatch) {
-                        log('[botão] ' + buildingId + ' botão fallback encontrado pelo texto (texto: "' + text.slice(0,20) + '")', 'success');
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // NOVO Fallback Extra: Procurar links com ajaxaction=upgrade_building diretamente
+        // --- 3. Upgrade link com type=main (formato real do TW) ---
         var upgradeLinks = mainDoc.querySelectorAll('a[href*="ajaxaction=upgrade_building"]');
-        for (var j = 0; j < upgradeLinks.length; j++) {
-            var link = upgradeLinks[j];
-            var href = link.href || link.getAttribute('href') || '';
-            // Verificar se o link é para este edifício específico
-            if (href.includes('type=' + buildingId) || href.includes('type%3D' + buildingId)) {
-                if (!link.classList.contains('disabled') && !link.hasAttribute('disabled')) {
-                    log('[botão] ' + buildingId + ' botão encontrado via ajaxaction=upgrade_building (href: ' + href.slice(0,80) + ')', 'success');
-                    return true;
-                }
+        if (upgradeLinks.length > 0) {
+            for (var j = 0; j < upgradeLinks.length; j++) {
+                var lnk = upgradeLinks[j];
+                if (!lnk.classList.contains('disabled') && !lnk.hasAttribute('disabled')) return true;
             }
         }
 
-        // Debug extensivo para estátua
+        // --- 4. Estátua: estrutura própria ---
         if (buildingId === 'statue') {
-            var allButtons = mainDoc.querySelectorAll('button, a.btn, .upgrade-button, .btn-upgrade, .btn-build');
-            log('[botão] Total de botões na página: ' + allButtons.length);
-            for (var i = 0; i < Math.min(10, allButtons.length); i++) {
-                var b = allButtons[i];
-                log('[botão] Botão ' + i + ': class=' + b.className + ' | href=' + (b.href || 'N/A') + ' | text=' + b.textContent.slice(0, 30).trim());
-            }
-
-            // Verificar se há algum elemento com "statue" no ID ou classe
-            var statueElements = mainDoc.querySelectorAll('[id*="statue"], [class*="statue"], [data-building="statue"]');
-            log('[botão] Elementos com "statue": ' + statueElements.length);
-            for (var j = 0; j < Math.min(5, statueElements.length); j++) {
-                var el = statueElements[j];
-                log('[botão] Elemento ' + j + ': id=' + el.id + ' | class=' + el.className + ' | tagName=' + el.tagName);
-                // Verificar filhos deste elemento
-                var children = el.querySelectorAll('*');
-                log('[botão]   Filhos: ' + children.length);
-                for (var k = 0; k < Math.min(3, children.length); k++) {
-                    var child = children[k];
-                    log('[botão]     Filho ' + k + ': ' + child.tagName + ' class=' + child.className);
-                }
-            }
-        }
-
-        // Debug para TODOS os edifícios quando não encontra botão
-        log('[botão] ' + buildingId + ' NÃO encontrou botão após todas as verificações', 'warning');
-        var upgradeLinksAll = mainDoc.querySelectorAll('a[href*="ajaxaction=upgrade_building"]');
-        log('[botão] URLs com ajaxaction=upgrade_building na página: ' + upgradeLinksAll.length);
-        for (var ul = 0; ul < Math.min(5, upgradeLinksAll.length); ul++) {
-            var ulink = upgradeLinksAll[ul];
-            var uhref = ulink.href || ulink.getAttribute('href') || '';
-            var typeMatch = uhref.match(/type=([^&]+)/);
-            log('[botão]   Link ' + ul + ': type=' + (typeMatch ? typeMatch[1] : 'N/A') + ' | href=' + uhref.slice(0,60));
+            if (mainDoc.querySelector('.statue_level_1, .statue_level_2, .statue-built, [data-statue-level]')) return false;
+            if (mainDoc.querySelector('.statue-slot-empty, .statue_empty, .empty_statue_slot')) return true;
         }
 
         return false;
@@ -1552,26 +1786,17 @@
      */
     function isBuildExecutable(buildingId, state, mainDoc) {
         // 1. Pré-requisitos básicos
-        if (!state.podeSerConstruido[buildingId]) {
-            log('[executável] ' + buildingId + ' bloqueado: pré-requisitos não atendidos', 'warn');
-            return false;
-        }
+        if (!state.podeSerConstruido[buildingId]) return false;
 
         // 2. Verificar se botão está disponível no DOM
-        if (!isButtonAvailable(buildingId, mainDoc)) {
-            log('[executável] ' + buildingId + ' bloqueado: botão não disponível', 'warn');
-            return false;
-        }
+        if (!isButtonAvailable(buildingId, mainDoc)) return false;
 
         // 3. Extrair custos (priorizar DOM, fallback tabela)
         var baseCosts = TW_BUILDING_COSTS[buildingId];
         var nivelAtual = parseInt(state.niveis[buildingId] || 0);
         var costs = extractCosts(buildingId, mainDoc, baseCosts);
 
-        if (!costs) {
-            log('[executável] ' + buildingId + ' bloqueado: não foi possível determinar custos', 'warn');
-            return false;
-        }
+        if (!costs) return false;
 
         // Aplicar progressão de nível se veio da tabela
         if (!costs.fromDOM && baseCosts) {
@@ -1587,13 +1812,9 @@
         }
 
         // 5. Verificar se há vaga na fila
-        var maxFila = state.premium.ativo ? 5 : 2;
-        if (state.filaBuilds >= maxFila) {
-            log('[executável] ' + buildingId + ' bloqueado: fila cheia (' + state.filaBuilds + '/' + maxFila + ')', 'warn');
-            return false;
-        }
+        var maxFila = (state.premium && state.premium.ativo) ? 5 : 2;
+        if (state.filaBuilds >= maxFila) return false;
 
-        log('[executável] ' + buildingId + ' VERIFICADO: pronto para construir!', 'success');
         return true;
     }
 
@@ -1606,9 +1827,27 @@
     }
 
     function collectVillageState(villageId) {
+        // Garante que erros síncronos (ex.: game_data nulo) rejeitem a Promise
+        // em vez de lançar antes do encadeamento .then/.catch do chamador
+        try {
+            return _collectVillageStateImpl(villageId);
+        } catch (e) {
+            log('[collectVillageState] Erro síncrono: ' + e.message, 'error');
+            return Promise.reject(e);
+        }
+    }
+
+    function _collectVillageStateImpl(villageId) {
         var origin = window.location.origin;
-        var safeStr = function (p) { return p.catch(() => ''); };
-        var statueEnabled = (typeof game_data !== 'undefined' && game_data.village.buildings.statue !== undefined);
+        var safeStr = function (p) { return p.catch(function() { return ''; }); };
+        var statueEnabled = false;
+        try {
+            statueEnabled = typeof game_data !== 'undefined'
+                && game_data !== null
+                && game_data.village != null
+                && game_data.village.buildings != null
+                && game_data.village.buildings.statue !== undefined;
+        } catch (e) { statueEnabled = false; }
 
         // Limpar cache expirado antes de coletar novo estado
         RequestCache.cleanup();
@@ -1617,86 +1856,50 @@
         // Nota: Em versão futura, buscar screen=overview_v para ataques em andamento
         // e screen=place para quests/tasks ativas
 
+        // Quest popup: busca no máximo uma vez a cada 5 minutos por aldeia
+        var QUEST_TTL  = 300000;
+        var questTsKey = 'twbot_quest_ts_' + villageId;
+        var fetchQuest = (Date.now() - GM_getValue(questTsKey, 0)) > QUEST_TTL;
+        if (fetchQuest) GM_setValue(questTsKey, Date.now());
+        var questUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=quest_popup&tab=main-tab&quest=0';
+
         // Usar cache para reduzir requisições redundantes
         return Promise.all([
             safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=flags', true)),
             safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=main', true)),
-            statueEnabled ? getKnightState(villageId) : Promise.resolve({ canRecruit: false, isPresent: false, isRecruiting: false, statueExists: false })
+            statueEnabled ? getKnightState(villageId) : Promise.resolve({ canRecruit: false, isPresent: false, isRecruiting: false, statueExists: false }),
+            fetchQuest ? safeStr(twFetch(questUrl, 'GET', null, false)) : Promise.resolve('')
         ]).then(function (results) {
-            var flagsHtml = results[0], mainHtml = results[1], statueInfo = results[2];
+            var flagsHtml = results[0], mainHtml = results[1], statueInfo = results[2], questHtml = results[3] || '';
             var mainDoc = new DOMParser().parseFromString(mainHtml, 'text/html');
             var rawData = typeof game_data !== 'undefined' ? game_data : {};
 
             // --- DETECÇÃO DE RUSH (Obras e Paladino) ---
-            log('[rush-detect] === INICIANDO DETECÇÃO DE RUSH ===', 'info');
             var rushCandidates = [];
-            // Seletores mais abrangentes para a fila de construção
             var buildQueueRows = mainDoc.querySelectorAll('#build_queue tr[id^="order_"], #build_queue tr, .buildqueue_container tr, tr[id^="order_"]');
-            log('[rush-detect] Encontradas ' + buildQueueRows.length + ' linhas na fila de construção', 'info');
-
-            if (buildQueueRows.length === 0) {
-                log('[rush-detect] NENHUMA linha encontrada com os seletores padrão!', 'warn');
-                log('[rush-detect] HTML da seção de fila (se existir): ' + (mainDoc.querySelector('#build_queue')?.outerHTML.substring(0, 500) || 'NÃO ENCONTRADO'), 'debug');
-            }
 
             buildQueueRows.forEach((row, index) => {
-                log('[rush-detect] Analisando linha ' + index + ': ' + row.id + ' | Classes: ' + row.className, 'debug');
-                log('[rush-detect] HTML completo da linha: ' + row.outerHTML, 'debug');
-
                 var timerEl = row.querySelector('.timer, .time_remaining, span[style*="color"]');
-                if (!timerEl) {
-                    log('[rush-detect] Linha ' + index + ': Sem elemento .timer ou .time_remaining, pulando', 'info');
-                    return;
-                }
-                var timerText = timerEl.textContent.trim();
-                log('[rush-detect] Linha ' + index + ': Texto do timer="' + timerText + '"', 'debug');
-
-                var secondsLeft = timeToSeconds(timerText);
-                log('[rush-detect] Linha ' + index + ': Timer="' + timerText + '" → ' + secondsLeft + ' segundos', 'info');
-
-                // Verifica se é elegível (menos de 3 minutos = 180s)
-                if (secondsLeft > 0 && secondsLeft < 185) {
-                    // Tenta extrair ID de várias formas
+                if (!timerEl) return;
+                var secondsLeft = timeToSeconds(timerEl.textContent.trim());
+                if (secondsLeft > 0 && secondsLeft < (CONFIG.freeRushMinutes * 60 + 120)) {
                     var orderId = row.id.replace('order_', '');
-                    var idLink = row.querySelector('a[href*="id="')?.getAttribute('href') || "";
+                    var idLink  = row.querySelector('a[href*="id="')?.getAttribute('href') || '';
                     var m = idLink.match(/id=(\d+)/);
-
                     if (m && m[1]) {
                         rushCandidates.push(m[1]);
-                        log('[rush-detect] Linha ' + index + ': ELEGÍVEL PARA RUSH! ID=' + m[1] + ' (' + secondsLeft + 's)', 'success');
-                    } else if (orderId && orderId !== '' && !isNaN(orderId)) {
+                        log('[rush] RUSH elegível: obra ID=' + m[1] + ' (' + secondsLeft + 's restantes)', 'success');
+                    } else if (orderId && !isNaN(orderId)) {
                         rushCandidates.push(orderId);
-                        log('[rush-detect] Linha ' + index + ': ELEGÍVEL PARA RUSH (via ID da row)! ID=' + orderId + ' (' + secondsLeft + 's)', 'success');
-                    } else {
-                        log('[rush-detect] Linha ' + index + ': Não encontrou ID válido. Link="' + idLink + '" OrderID="' + orderId + '"', 'warning');
+                        log('[rush] RUSH elegível: obra ID=' + orderId + ' (' + secondsLeft + 's restantes)', 'success');
                     }
-                } else if (secondsLeft <= 0) {
-                    log('[rush-detect] Linha ' + index + ': Tempo inválido ou concluído (' + secondsLeft + 's)', 'info');
-                } else {
-                    log('[rush-detect] Linha ' + index + ': ' + secondsLeft + 's >= 185s, não elegível para rush', 'info');
                 }
             });
 
-            log('[rush-detect] Total de candidatos a rush: ' + rushCandidates.length, 'info');
-            if (rushCandidates.length > 0) {
-                log('[rush-detect] IDs elegíveis: [' + rushCandidates.join(', ') + ']', 'success');
-            } else {
-                log('[rush-detect] Nenhum candidato encontrado. Verifique se há construções em andamento.', 'warn');
-            }
-
             var knightRushId = null;
             if (statueInfo.isRecruiting) {
-                log('[rush-detect] Paladino em recrutamento detectado!', 'info');
-                // Tentar extrair ID do paladino em recrutamento
-                var mK = (statueInfo.htmlPura || "").match(/knight=(\d+)/) || (statueInfo.htmlPura || "").match(/data-knight=["'](\d+)/);
-                if (mK) {
-                    knightRushId = mK[1];
-                    log('[rush-detect] Knight Rush ID encontrado: ' + knightRushId, 'success');
-                } else {
-                    log('[rush-detect] Não encontrou ID do paladino no HTML', 'warning');
-                }
-            } else {
-                log('[rush-detect] Paladino NÃO está em recrutamento', 'info');
+                var mK = (statueInfo.htmlPura || '').match(/knight=(\d+)/) || (statueInfo.htmlPura || '').match(/data-knight=["'](\d+)/);
+                if (mK) { knightRushId = mK[1]; log('[rush] Paladino elegível para rush ID=' + knightRushId, 'success'); }
             }
 
             // Estimar loot esperado baseado em recursos disponíveis para saque (simplificado)
@@ -1730,7 +1933,17 @@
             var finalStone = (stoneFromDOM > 0) ? stoneFromDOM : (parseFloat(rawData.village.stone_float) || 0);
             var finalIron = (ironFromDOM > 0) ? ironFromDOM : (parseFloat(rawData.village.iron_float) || 0);
 
-            log('[recursos] DOM: W=' + woodFromDOM + ' S=' + stoneFromDOM + ' I=' + ironFromDOM + ' | RAW: W=' + rawData.village.wood_float + ' S=' + rawData.village.stone_float + ' I=' + rawData.village.iron_float + ' | FINAL: W=' + finalWood + ' S=' + finalStone + ' I=' + finalIron);
+            if (woodFromDOM > 0 || stoneFromDOM > 0 || ironFromDOM > 0) {
+                log('[recursos] DOM: W=' + woodFromDOM + ' S=' + stoneFromDOM + ' I=' + ironFromDOM + ' | FINAL: W=' + Math.round(finalWood) + ' S=' + Math.round(finalStone) + ' I=' + Math.round(finalIron), 'debug');
+            }
+
+            // Calibrar custos reais do mundo automaticamente (uma vez por 24h por mundo)
+            try {
+                var _worldId = (rawData.world) || window.location.hostname.replace(/[^a-z0-9]/gi, '_');
+                scrapeBuildingCostsFromDOM(mainDoc, rawData.village.buildings || {}, _worldId);
+            } catch(e) {
+                log('[costs-scraper] Erro durante scraping: ' + e.message, 'warning');
+            }
 
             var state = {
                 villageId: villageId,
@@ -1751,7 +1964,9 @@
                 podeSerConstruido: {},
                 // Sistema proativo de previsão de overflow
                 lootEsperado: lootEstimadoSimples,      // Estimativa baseada em recursos (futuro: attacks em andamento)
-                rewardsEsperados: rewardsQuestsEstimado, // Estimativa de rewards (futuro: integração quests)
+                rewardsEsperados: rewardsQuestsEstimado,
+                // Recompensas de quests disponíveis (parseadas do popup, máx. 1×/5min)
+                questRewards: parseQuestRewards(questHtml),
                 // Dados brutos do DOM para validação executável
                 _mainDoc: mainDoc,
                 _mainHtml: mainHtml
@@ -1771,7 +1986,7 @@
     }
 function motorDeDecisaoMacro(state, villageId) {
         var tasks = [];
-        var maxFila = state.premium.ativo ? 5 : 2;
+        var maxFila = (state.premium && state.premium.ativo) ? 5 : 2;
 
         // Carregar memória da aldeia
         var memory = VillageMemory.get(villageId);
@@ -1787,39 +2002,61 @@ function motorDeDecisaoMacro(state, villageId) {
 
         // Obter pesos estratégicos baseados no perfil da aldeia (substitui profile do jogador)
         var profileWeights = VillageMemory.getStrategyWeights(villageId);
-        log('[motorDeDecisao] Perfil da aldeia: ' + memory.profile, 'info');
+
+        // TRAVA GLOBAL DE HQ (Manual 2026) — avaliada uma vez, aplicada em todos os blocos
+        // HQ só sobe além de nível 15 em EARLY depois que Estábulo E Ferreiro existirem (≥ 1)
+        var _hqLvl     = parseInt(state.niveis['main']   || 0);
+        var _stLvl     = parseInt(state.niveis['stable'] || 0);
+        var _smLvl     = parseInt(state.niveis['smith']  || 0);
+        var _HQ_LOCKED = (state.phase === 'EARLY' && _hqLvl >= 10 && (_stLvl < 1 || _smLvl < 1));
+        if (_HQ_LOCKED) {
+            log('[estratégia] HQ TRAVADO GLOBALMENTE (Nv.' + _hqLvl + '): aguardando Estábulo/Ferreiro', 'warning');
+        }
 
         // 1. RUSH GRÁTIS (Sempre primeiro)
-        log('[motorDeDecisao] Verificando rush de obras... rushIds.length=' + state.rushIds.length, 'info');
-        if (state.rushIds.length > 0) {
-            log('[motorDeDecisao] ENCONTROU ' + state.rushIds.length + ' obras para rush! IDs: [' + state.rushIds.join(', ') + ']', 'success');
-            state.rushIds.forEach(id => tasks.push({ id: 'build_rush', action: 'DO', orderId: id }));
+        var _rushIds = state.rushIds || [];
+        if (_rushIds.length > 0) {
+            log('[rush] ' + _rushIds.length + ' obra(s) para rush: [' + _rushIds.join(', ') + ']', 'success');
+            _rushIds.forEach(id => tasks.push({ id: 'build_rush', action: 'DO', orderId: id }));
             visHUD.acao = "RUSH OBRA"; visHUD.motivo = "Limpando fila.";
             HUD.set('build_general', 'running', 'Finalizando obras');
             HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
             return Promise.resolve(tasks);
-        } else {
-            log('[motorDeDecisao] Nenhuma obra elegível para rush no momento', 'info');
         }
 
-        log('[motorDeDecisao] Verificando rush de paladino... knightRushId=' + state.knightRushId, 'info');
         if (state.knightRushId) {
-            log('[motorDeDecisao] ENCONTROU paladino para rush! KnightID: ' + state.knightRushId, 'success');
+            log('[rush] Paladino para rush: ID=' + state.knightRushId, 'success');
             tasks.push({ id: 'knight_rush', action: 'DO', knightId: state.knightRushId });
             visHUD.acao = "RUSH PALADINO"; visHUD.motivo = "Finalizando herói!";
             HUD.set('knight', 'running', 'Recrutamento em rush');
             HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
             return Promise.resolve(tasks);
-        } else {
-            log('[motorDeDecisao] Nenhum paladino elegível para rush no momento', 'info');
         }
 
         // 2. BANDEIRA (Se não houver nenhuma ativa)
         if (!state.flagAssigned) {
-            var best = state.flags.sort((a,b) => (CATEGORY_PRIORITY[state.phase][b.category] + b.level*3) - (CATEGORY_PRIORITY[state.phase][a.category] + a.level*3))[0];
+            var _flags = state.flags || [];
+            // Contexto estratégico para scoring: perfil + milestone (ciclo anterior) + situação econômica
+            var _flagPct = {
+                wood:  state.recursos.wood  / (state.recursos.max || 1),
+                stone: state.recursos.stone / (state.recursos.max || 1),
+                iron:  state.recursos.iron  / (state.recursos.max || 1)
+            };
+            var _flagCtx = {
+                profile:        memory.profile,
+                phase:          state.phase,
+                milestoneId:    memory.currentMilestone,
+                taxaPop:        state.populacao.max > 0 ? state.populacao.current / state.populacao.max : 0,
+                riscoArmazem:   _flagPct.wood > 0.90 || _flagPct.stone > 0.90 || _flagPct.iron > 0.90,
+                recursosPercent: _flagPct
+            };
+            var best = _flags.slice().sort(function(a, b) {
+                return scoreFlagStrategic(b, _flagCtx) - scoreFlagStrategic(a, _flagCtx);
+            })[0];
             if (best) {
-                tasks.push({ id: 'flag', action: 'DO', reason: "Ativando " + best.category });
-                visHUD.acao = "BANDEIRA"; visHUD.motivo = "Otimizando produção.";
+                tasks.push({ id: 'flag', action: 'DO', reason: "Ativando " + best.category, ctx: _flagCtx });
+                visHUD.acao = "BANDEIRA";
+                visHUD.motivo = "Flag: " + best.category + " [" + (memory.profile || 'balanced') + "]";
                 HUD.set('flag', 'running', 'Selecionando categoria');
             } else {
                 HUD.set('flag', 'idle', 'Sem bandeiras disponíveis');
@@ -1833,20 +2070,19 @@ function motorDeDecisaoMacro(state, villageId) {
 
         // Verificar se estátua foi construída (nível >= 1) mas paladino ainda não está presente
         // Isso pode ocorrer quando estátua foi finalizada mas paladino morreu/foi expulso
-        var statueBuilt = state.statueEnabled && state.knight.statueExists;
+        var _knight = state.knight || {};
+        var statueBuilt = state.statueEnabled && _knight.statueExists;
 
-        if (state.knight.canRecruit && Date.now() > pBlock) {
+        if (_knight.canRecruit && Date.now() > pBlock) {
             tasks.push({ id: 'knight', action: 'DO' });
             visHUD.acao = "RECRUTAR PALADINO";
             HUD.set('knight', 'running', 'Pronto para recrutar');
-        } else if (state.knight.isRecruiting) {
+        } else if (_knight.isRecruiting) {
             HUD.set('knight', 'waiting', 'Recrutando...');
-        } else if (!state.knight.isPresent && !statueBuilt) {
+        } else if (!_knight.isPresent && !statueBuilt) {
             // Estátua ainda não foi construída
             HUD.set('knight', 'idle', 'Estátua não construída');
-        } else if (!state.knight.isPresent && statueBuilt) {
-            // Estátua existe mas paladino está ausente/morto - pode recrutar!
-            log('[motorDeDecisao] Estátua construída, paladino ausente - pronto para reviver', 'info');
+        } else if (!_knight.isPresent && statueBuilt) {
             if (Date.now() > pBlock) {
                 tasks.push({ id: 'knight', action: 'DO' });
                 visHUD.acao = "REVIVER PALADINO";
@@ -1858,8 +2094,11 @@ function motorDeDecisaoMacro(state, villageId) {
             HUD.set('knight', 'done', 'Paladino ativo');
         }
 
-        // 4. MARCOS ESTRATÉGICOS (Milestones) - com persistência
-        var activeMilestone = MILESTONES.find(m => {
+        // 4. MARCOS ESTRATÉGICOS (Milestones) - roadmap global + perfil da aldeia
+        // Fundações globais vêm primeiro; depois o caminho diverge por perfil
+        var _profilePath    = MILESTONES_BY_PROFILE[memory.profile] || MILESTONES_BY_PROFILE.balanced;
+        var _allMilestones  = MILESTONES_GLOBAL.concat(_profilePath);
+        var activeMilestone = _allMilestones.find(function(m) {
             for (var ed in m.reqs) {
                 if (state.niveis[ed] === undefined) continue;
                 if (parseInt(state.niveis[ed] || 0) < m.reqs[ed]) return true;
@@ -1869,12 +2108,12 @@ function motorDeDecisaoMacro(state, villageId) {
 
         // Persistir milestone atual na memória
         if (activeMilestone) {
-            visHUD.meta = activeMilestone.label;
+            visHUD.meta = '[' + (memory.profile || 'balanced') + '] ' + activeMilestone.label;
             if (memory.currentMilestone !== activeMilestone.id) {
                 VillageMemory.set(villageId, 'currentMilestone', activeMilestone.id);
             }
         } else {
-            visHUD.meta = "Otimização";
+            visHUD.meta = '[' + (memory.profile || 'balanced') + '] Otimização';
         }
 
         // Atualizar status da estátua
@@ -1893,6 +2132,9 @@ function motorDeDecisaoMacro(state, villageId) {
         // 5. OBRAS GERAIS COM MOTOR DE PRECISÃO
         if (state.filaBuilds < maxFila) {
             var selectedTarget = null;
+            var selectedTier = 'P4';
+            var selectedScoreMargin = 0;
+            var selectedAlternative = null;
             var taxaPop = (state.populacao.current / (state.populacao.max || 1)) * 100;
 
             // ==========================================
@@ -1932,172 +2174,197 @@ function motorDeDecisaoMacro(state, villageId) {
             // Percentual projetado considerando influxo futuro
             var percentualProjetado = recursosTotaisProjetados / capacidadeTotalArmazem;
 
-            // Verificar overflow iminente para cada recurso individualmente
+            // Tempo até overflow por recurso individual — decisor primário de risco.
+            // Calculado para todos os recursos (não só os acima de 80%).
             var tempoAteOverflow = { wood: 999, stone: 999, iron: 999 };
-            for (var res in recursosPercent) {
-                if (recursosPercent[res] > 0.8) {
-                    var producaoHora = state.producao[res] || 1;
-                    var capacidadeRestante = state.recursos.max - state.recursos[res];
-                    var horas = capacidadeRestante / (producaoHora || 1);
-                    tempoAteOverflow[res] = horas;
-                }
-            }
+            ['wood', 'stone', 'iron'].forEach(function(res) {
+                var _prod = state.producao[res] || 0;
+                var _cap  = state.recursos.max - (state.recursos[res] || 0);
+                if (_prod > 0) tempoAteOverflow[res] = _cap / _prod;
+            });
 
-            // Risco de armazém cheio: se algum recurso >95% OU projetado >90%
-            if (recursosPercent.wood > 0.95 || recursosPercent.stone > 0.95 || recursosPercent.iron > 0.95 || percentualProjetado > 0.90) {
-                riscoArmazem = true;
-            }
-
-            // Calcular tempo até gargalo mais crítico (em horas)
-            var tempoAteGargalo = 999;
-            for (var res in tempoAteOverflow) {
-                if (tempoAteOverflow[res] < tempoAteGargalo) {
-                    tempoAteGargalo = tempoAteOverflow[res];
-                }
-            }
-
-            // Ajustar tempo até gargalo considerando loot e rewards
+            // Ajustar tempo individual por loot e rewards esperados.
+            // Distribuição proporcional ao peso atual de cada recurso — individual prevalece sobre agregado.
             if (lootEsperado > 0 || rewardsEsperados > 0) {
-                var influxoExtraHora = (lootEsperado + rewardsEsperados) / 24; // Distribuído em 24h
-                var capacidadeRestanteTotal = (state.recursos.max * 3) - (state.recursos.wood + state.recursos.stone + state.recursos.iron);
-                var tempoComInfluxoExtra = capacidadeRestanteTotal / ((producaoTotalHora || 1) + influxoExtraHora);
-                if (tempoComInfluxoExtra < tempoAteGargalo) {
-                    tempoAteGargalo = tempoComInfluxoExtra;
+                var _totalRes    = (state.recursos.wood || 0) + (state.recursos.stone || 0) + (state.recursos.iron || 0);
+                var _influxoTotal = lootEsperado + rewardsEsperados;
+                ['wood', 'stone', 'iron'].forEach(function(res) {
+                    var _ratio      = _totalRes > 0 ? (state.recursos[res] || 0) / _totalRes : 1 / 3;
+                    var _influxoH   = (_influxoTotal * _ratio) / 24;
+                    var _capRest    = state.recursos.max - (state.recursos[res] || 0);
+                    var _prodTotal  = (state.producao[res] || 0) + _influxoH;
+                    if (_prodTotal > 0) {
+                        var _t = _capRest / _prodTotal;
+                        if (_t < tempoAteOverflow[res]) tempoAteOverflow[res] = _t;
+                    }
+                });
+            }
+
+            // Tempo até gargalo = mínimo individual (não agregado)
+            var tempoAteGargalo = Math.min(tempoAteOverflow.wood, tempoAteOverflow.stone, tempoAteOverflow.iron);
+
+            // Decisor individual: recurso >95% OU algum vai encher em < 2h
+            riscoArmazem = (recursosPercent.wood  > 0.95 ||
+                            recursosPercent.stone > 0.95 ||
+                            recursosPercent.iron  > 0.95 ||
+                            tempoAteGargalo < 2.0);
+            // Contexto agregado como sinal de apoio — reforça mas nunca substitui o individual
+            if (!riscoArmazem && percentualProjetado > 0.90) riscoArmazem = true;
+
+            // ==========================================
+            // PRIORIDADE 0: NOBLING PREP (main ≥ 20 && smith ≥ 20)
+            // Quando os pré-requisitos do milestone noble_prep estão atendidos,
+            // entra em modo de acumulação: bloqueia construções não essenciais até
+            // juntar NOBLE_COST_EACH × NOBLES_ALVO de cada recurso. Se o armazém
+            // for insuficiente para guardar o custo de 1 nobre, constrói storage primeiro.
+            // ==========================================
+            var noblingPrepBlocking = false;
+            var NOBLE_COST_EACH = 60000;
+            var NOBLES_ALVO     = 3;
+            var noblingTarget   = NOBLE_COST_EACH * NOBLES_ALVO; // 180 000 de cada recurso
+
+            if (parseInt(state.niveis.main  || 0) >= 20
+             && parseInt(state.niveis.smith || 0) >= 20) {
+
+                var nStorageOk  = (state.recursos.max || 0) >= NOBLE_COST_EACH;
+                var woodFalta   = Math.max(0, noblingTarget - (state.recursos.wood  || 0));
+                var stoneFalta  = Math.max(0, noblingTarget - (state.recursos.stone || 0));
+                var ironFalta   = Math.max(0, noblingTarget - (state.recursos.iron  || 0));
+                var nobleReady  = woodFalta === 0 && stoneFalta === 0 && ironFalta === 0;
+                var nobleProgPct = Math.min(100, Math.round(
+                    ((Math.min(state.recursos.wood  || 0, noblingTarget)
+                    + Math.min(state.recursos.stone || 0, noblingTarget)
+                    + Math.min(state.recursos.iron  || 0, noblingTarget))
+                    / (noblingTarget * 3)) * 100
+                ));
+
+                if (!nStorageOk && isBuildExecutable('storage', state, state._mainDoc)) {
+                    // Armazém insuficiente: construir storage como prioridade máxima
+                    selectedTarget = 'storage';
+                    selectedTier = 'P_NOBLING'; selectedScoreMargin = 999;
+                    visHUD.gargalo = "NOBLING: ARMAZÉM";
+                    visHUD.motivo  = "Capacidade " + state.recursos.max + " < " + NOBLE_COST_EACH.toLocaleString() + " — ampliar antes de acumular";
+                    HUD.set('build_general', 'running', 'Ampliando armazém (Nobling Prep)');
+                    log('[nobling-prep] Storage insuficiente (' + state.recursos.max + ' < ' + NOBLE_COST_EACH + '), priorizando construção', 'info');
+                } else if (nobleReady) {
+                    visHUD.gargalo = "NOBLING READY";
+                    visHUD.motivo  = "Recursos para " + NOBLES_ALVO + " nobres acumulados — inicie o recrutamento!";
+                    HUD.set('build_general', 'done', 'Pronto para Nobling!');
+                    log('[nobling-prep] PRONTO! ' + NOBLES_ALVO + ' nobres financiados. Inicie o recrutamento.', 'success');
+                    // Não bloqueia: permite retomar construções normais após acumular
+                } else {
+                    // Em acumulação ativa: bloquear todas as construções não essenciais
+                    noblingPrepBlocking = true;
+                    var nobleMsg = nobleProgPct + "% | Falta W:" + Math.floor(woodFalta/1000) + "k S:" + Math.floor(stoneFalta/1000) + "k I:" + Math.floor(ironFalta/1000) + "k";
+                    visHUD.gargalo = "NOBLING PREP";
+                    visHUD.motivo  = nobleMsg;
+                    HUD.set('build_general', 'waiting', 'Acumulando nobres (' + nobleProgPct + '%)');
+                    HUD.updateDiagnostics(visHUD.fase, 'NOBLING PREP', NOBLES_ALVO + ' Nobres', 'ACUMULANDO', nobleMsg);
+                    log('[nobling-prep] ' + nobleMsg, 'info');
                 }
             }
 
             // ==========================================
-            // PRIORIDADE 1: GARGALO DE POPULAÇÃO (FARM)
+            // GARGALO DE POPULAÇÃO — 4 NÍVEIS RÍGIDOS
             // ==========================================
-            // Emergência (95%+): Farm prioritário absoluto
-            // Prioridade Alta (92-95%): Farm com alta prioridade
-            // Preparação (88-92%): Farm se houver vaga e sem gargalo mais urgente
-            // Observação (82-88%): Considerar farm no score
-            if (nivelAlertaFarm === 'emergencia' && state.podeSerConstruido['farm']) {
+            // P0  Emergência  (95%+):   interrupção total — precede tudo, inclusive nobling
+            // P1C Prio. Alta  (92-95%): prioridade explícita — antes de anti-overflow e milestones
+            // P3  Preparação  (88-92%): meta latente — farm compete dentro do bloco de milestone
+            // P4  Observação  (82-88%): bônus de score apenas (urgênciaGargalo = 1.1)
+            var _noblingEssentials = ['farm', 'storage', 'market'];
+            // PRIORIDADE 0: Emergência (95%+) — interrupção total
+            // Precede nobling prep: pop crítica invalida qualquer outra estratégia
+            if (nivelAlertaFarm === 'emergencia' && state.podeSerConstruido['farm'] && isBuildExecutable('farm', state, state._mainDoc)) {
                 selectedTarget = 'farm';
-                visHUD.gargalo = "POPULAÇÃO (EMERGÊNCIA)";
-                visHUD.motivo = "População em " + Math.round(taxaPop) + "% - Paralisando crescimento!";
+                selectedTier = 'P0'; selectedScoreMargin = 999;
+                visHUD.gargalo = "POPULAÇÃO (EMERGÊNCIA 95%+)";
+                visHUD.motivo = "Pop em " + Math.round(taxaPop) + "% — interrupção total";
+            }
+            // PRIORIDADE 1: Nobling prep (farm emergência já tratado acima)
+            else if (noblingPrepBlocking && _noblingEssentials.indexOf(selectedTarget) === -1) {
+                // Nobling Prep: permite farm/storage/market, bloqueia todo o resto
+                var _ess = _noblingEssentials.filter(function(b) { return state.podeSerConstruido[b]; });
+                if (_ess.length > 0) {
+                    selectedTarget = _ess[0];
+                    selectedTier = 'P_NOBLING'; selectedScoreMargin = 999;
+                    visHUD.gargalo = "NOBLING PREP (essencial)";
+                    visHUD.motivo  = "Acumulando nobres — permitindo " + selectedTarget;
+                } else {
+                    selectedTarget = null;
+                }
+            } else if (noblingPrepBlocking) {
+                // selectedTarget já é essencial — deixa passar
             }
             // PRIORIDADE 1B: Risco iminente de armazém cheio (<1.5h para encher)
             else if (riscoArmazem && tempoAteGargalo < 1.5) {
                 // Escolher edifício de recurso mais carente
-                var recursoMaisCarente = Object.keys(recursosPercent).reduce((a, b) => recursosPercent[a] > recursosPercent[b] ? a : b);
+                // Decisor individual: recurso com menor tempo até overflow — não o de maior % atual
+                var recursoMaisCarente = ['wood', 'stone', 'iron'].reduce(function(a, b) {
+                    return tempoAteOverflow[a] <= tempoAteOverflow[b] ? a : b;
+                });
                 if (state.podeSerConstruido[recursoMaisCarente]) {
                     selectedTarget = recursoMaisCarente;
+                    selectedTier = 'P1B'; selectedScoreMargin = 999;
                     visHUD.gargalo = "ARMAZÉM CHEIO (CRÍTICO)";
-                    visHUD.motivo = Math.round(recursosPercent[recursoMaisCarente]*100) + "% - " + Math.round(tempoAteGargalo*60) + "min";
+                    visHUD.motivo = Math.round(recursosPercent[recursoMaisCarente]*100) + "% — overflow em " + Math.round(tempoAteOverflow[recursoMaisCarente]*60) + "min";
                 }
             }
-            // PRIORIDADE 1C: Farm em nível de prioridade alta (92-95%)
-            else if (nivelAlertaFarm === 'prioridade_alta' && state.podeSerConstruido['farm']) {
+            // PRIORIDADE 1C: Farm prioridade explícita (92-95%) — antes de overflow e milestones
+            else if (nivelAlertaFarm === 'prioridade_alta' && state.podeSerConstruido['farm'] && isBuildExecutable('farm', state, state._mainDoc)) {
                 selectedTarget = 'farm';
-                visHUD.gargalo = "POPULAÇÃO (ALTA)";
-                visHUD.motivo = "População em " + Math.round(taxaPop) + "% - Expansão necessária";
+                selectedTier = 'P1C'; selectedScoreMargin = 999;
+                visHUD.gargalo = "POPULAÇÃO (PRIORIDADE EXPLÍCITA 92-95%)";
+                visHUD.motivo = "Pop em " + Math.round(taxaPop) + "% — farm obrigatório";
             }
-            // PRIORIDADE 3: Marcos estratégicos com análise de custo-benefício
-            else if (activeMilestone) {
-                // FILTRO DE CANDIDATOS EXECUTÁVEIS (validação robusta)
-                var candidatos = Object.keys(activeMilestone.reqs).filter(ed => {
-                    // Pré-requisitos básicos
-                    if (state.niveis[ed] === undefined) return false;
-                    if (parseInt(state.niveis[ed]||0) >= activeMilestone.reqs[ed]) return false;
-                    if (!state.podeSerConstruido[ed]) return false;
-
-                    // Validação executável completa (recursos, botão, fila)
-                    if (!isBuildExecutable(ed, state, state._mainDoc)) return false;
-
-                    return true;
+            // PRIORIDADE 2: CONSTRUÇÃO RÁPIDA ANTI-OVERFLOW
+            // Quando recursos ≥80% da capacidade, priorizar edifícios com tempo de construção
+            // <120s (2 min) no nível atual para consumir recursos e evitar desperdício por overflow.
+            else if (recursosPercent.wood > 0.80 || recursosPercent.stone > 0.80 || recursosPercent.iron > 0.80) {
+                var recursoMaisCheio = Object.keys(recursosPercent).reduce(function(a, b) {
+                    return recursosPercent[a] > recursosPercent[b] ? a : b;
                 });
 
-                if (candidatos.length > 0) {
-                    // Calcular score baseado em: custo real, retorno por tempo, peso estratégico
-                    var nivelHQ = parseInt(state.niveis['main'] || 0);
-                    var bonusHQ = HQ_PRODUCTIVITY_BONUS[nivelHQ] || 0;
+                var _swPhase = state.phase || 'MID';
+                var candidatosRapidos = Object.keys(TW_BUILDING_COSTS).filter(function(ed) {
+                    if (!state.podeSerConstruido[ed]) return false;
+                    if (!isBuildExecutable(ed, state, state._mainDoc)) return false;
+                    var custo = TW_BUILDING_COSTS[ed];
+                    if (!custo) return false;
+                    var phaseWeights = STRATEGIC_WEIGHT[_swPhase] || STRATEGIC_WEIGHT['MID'];
+                    var w = phaseWeights[ed];
+                    if (w === undefined || w <= 0.5) return false; // exclude low-priority buildings
+                    var nivelAtual = parseInt(state.niveis[ed] || 0);
+                    var tempoReal = Math.floor(custo[3] * Math.pow(1.1, nivelAtual));
+                    return tempoReal < 120;
+                });
 
-                    var scores = candidatos.map(function(ed) {
-                        var custo = TW_BUILDING_COSTS[ed] || [100, 100, 100, 100];
-                        var nivelAtual = parseInt(state.niveis[ed] || 0);
-                        var custoTotalMadeira = custo[0] * Math.pow(1.5, nivelAtual);
-                        var custoTotalPedra = custo[1] * Math.pow(1.5, nivelAtual);
-                        var custoTotalFerro = custo[2] * Math.pow(1.5, nivelAtual);
-                        var tempoConstrucao = custo[3] * Math.pow(1.1, nivelAtual);
-
-                        // Custo total normalizado
-                        var custoNormalizado = (custoTotalMadeira + custoTotalPedra + custoTotalFerro) / 100;
-
-                        // Retorno por recurso (edifícios de recurso têm retorno contínuo)
-                        var retornoRecurso = ['wood', 'stone', 'iron', 'farm'].includes(ed) ? 1.5 : 1.0;
-
-                        // Peso estratégico baseado na fase e perfil da aldeia
-                        var pesoBase = STRATEGIC_WEIGHT[state.phase][ed] || 1.0;
-                        var ajustePerfil = profileWeights[ed] || 1.0;
-
-                        // Tempo até resolver gargalo atual (agora usa sistema de níveis de alerta)
-                        var urgenciaGargalo = 1.0;
-                        if (ed === 'farm') {
-                            // Farm: urgência baseada no nível de alerta do sistema proativo
-                            if (nivelAlertaFarm === 'emergencia') urgenciaGargalo = 2.0;
-                            else if (nivelAlertaFarm === 'prioridade_alta') urgenciaGargalo = 1.5;
-                            else if (nivelAlertaFarm === 'preparacao') urgenciaGargalo = 1.2;
-                            else if (nivelAlertaFarm === 'observacao') urgenciaGargalo = 1.1;
-                        }
-                        if (riscoArmazem && ['wood', 'stone', 'iron'].includes(ed)) {
-                            // Storage: urgência baseada no tempo até overflow
-                            if (tempoAteGargalo < 0.5) urgenciaGargalo = 2.5; // <30min = crítico
-                            else if (tempoAteGargalo < 1.0) urgenciaGargalo = 2.0; // <1h = muito urgente
-                            else if (tempoAteGargalo < 1.5) urgenciaGargalo = 1.5; // <1.5h = urgente
-                            else urgenciaGargalo = 1.2;
-                        }
-
-                        // Bônus do HQ como acelerador de throughput global
-                        // HQ não é só mais um edifício - é multiplicador de produtividade
-                        var bonusHQProdutoividade = 1.0;
-                        if (ed === 'main') {
-                            // Investir no HQ dá retorno exponencial: acelera TODAS as construções futuras
-                            // Quanto maior o nível atual do HQ, maior o ganho marginal de upar mais
-                            bonusHQProdutoividade = 1.0 + (bonusHQ * 2.5); // Multiplicador agressivo para HQ
-                        } else {
-                            // Outros edifícios se beneficiam do HQ existente
-                            bonusHQProdutoividade = 1.0 + bonusHQ;
-                        }
-
-                        // Score final: (peso * retorno * urgencia * perfil * bonusHQ) / (custo * (nivel+1))
-                        var score = (pesoBase * retornoRecurso * urgenciaGargalo * ajustePerfil * bonusHQProdutoividade) / (custoNormalizado * (nivelAtual + 1) * 0.1);
-
-                        // Bonus por ser pré-requisito direto de outras construções importantes
-                        var bonusPreReq = 0;
-                        for (var otherEd in TW_BUILDING_REQS) {
-                            if (TW_BUILDING_REQS[otherEd][ed] && !state.podeSerConstruido[otherEd]) {
-                                bonusPreReq += 0.2;
-                            }
-                        }
-
-                        // Bônus adicional para marcos estratégicos do HQ
-                        if (ed === 'main') {
-                            if (nivelAtual < 5) score *= 1.3; // Rush para hq_early
-                            else if (nivelAtual >= 5 && nivelAtual < 10) score *= 1.2; // Rush para hq_mid
-                        }
-
-                        return { ed: ed, score: score + bonusPreReq, custo: custoNormalizado, tempo: tempoConstrucao };
+                if (candidatosRapidos.length > 0) {
+                    // Entre os rápidos, priorizar o que consome mais recursos totais no nível atual
+                    candidatosRapidos.sort(function(a, b) {
+                        var custoA = TW_BUILDING_COSTS[a] || [0, 0, 0, 0];
+                        var custoB = TW_BUILDING_COSTS[b] || [0, 0, 0, 0];
+                        var nivelA = parseInt(state.niveis[a] || 0);
+                        var nivelB = parseInt(state.niveis[b] || 0);
+                        var consumoA = (custoA[0] + custoA[1] + custoA[2]) * Math.pow(1.5, nivelA);
+                        var consumoB = (custoB[0] + custoB[1] + custoB[2]) * Math.pow(1.5, nivelB);
+                        return consumoB - consumoA;
                     });
-
-                    // Ordenar por score decrescente
-                    scores.sort((a, b) => b.score - a.score);
-
-                    selectedTarget = scores[0].ed;
-                    visHUD.gargalo = "CUSTO-BENEFÍCIO";
-                    visHUD.motivo = "Score: " + scores[0].score.toFixed(2) + " | Custo: " + Math.round(scores[0].custo);
+                    selectedTarget = candidatosRapidos[0];
+                    selectedTier = 'P2'; selectedScoreMargin = 999;
+                    visHUD.gargalo = "ANTI-OVERFLOW (RÁPIDO)";
+                    visHUD.motivo = "Recursos " + recursoMaisCheio + " em " + Math.round(recursosPercent[recursoMaisCheio] * 100) + "% — construção rápida priorizada";
+                    log('[motorDeDecisao] Anti-overflow: priorizando ' + selectedTarget + ' (<2min) com ' + recursoMaisCheio + ' em ' + Math.round(recursosPercent[recursoMaisCheio]*100) + '%', 'info');
                 }
             }
-            // PRIORIDADE 4: Otimização geral baseada em score quando não há milestone ativo
+            // SCORE UNIFICADO — todos os edifícios competem simultaneamente
+            // Milestones viram bônus de score (×1.8), não filtros obrigatórios.
+            // urgênciaProdução detecta gargalos de mina sem regras manuais.
             else {
-                // FILTRO DE CANDIDATOS EXECUTÁVEIS (validação robusta)
-                var todosCandidatos = Object.keys(TW_BUILDING_REQS).filter(ed => {
+                var todosCandidatos = Object.keys(TW_BUILDING_REQS).filter(function(ed) {
                     if (!state.podeSerConstruido[ed]) return false;
-                    if (ed === 'snob') return false; // Snob só via milestone específico
-                    if ((state.niveis[ed] || 0) >= 25) return false; // Limite prático
-
-                    // Validação executável completa
+                    if (ed === 'snob') return false;
+                    if ((state.niveis[ed] || 0) >= 25) return false;
+                    if (ed === 'main' && _HQ_LOCKED) return false;
                     return isBuildExecutable(ed, state, state._mainDoc);
                 });
 
@@ -2105,51 +2372,115 @@ function motorDeDecisaoMacro(state, villageId) {
                     var nivelHQ = parseInt(state.niveis['main'] || 0);
                     var bonusHQ = HQ_PRODUCTIVITY_BONUS[nivelHQ] || 0;
 
-                    var scoresGerais = todosCandidatos.map(function(ed) {
+                    // Produção média/hora — base para detectar mina gargalo
+                    var _prodMedia = ((state.producao.wood || 0) + (state.producao.stone || 0) + (state.producao.iron || 0)) / 3;
+
+                    var unified = todosCandidatos.map(function(ed) {
                         var custo = TW_BUILDING_COSTS[ed] || [100, 100, 100, 100];
                         var nivelAtual = parseInt(state.niveis[ed] || 0);
                         var custoNormalizado = ((custo[0] + custo[1] + custo[2]) * Math.pow(1.5, nivelAtual)) / 100;
-                        var pesoBase = STRATEGIC_WEIGHT[state.phase][ed] || 1.0;
-                        var ajustePerfil = profileWeights[ed] || 1.0;
 
-                        // Bônus do HQ como acelerador de throughput global
-                        var bonusHQProdutoividade = 1.0;
-                        if (ed === 'main') {
-                            bonusHQProdutoividade = 1.0 + (bonusHQ * 2.5);
-                        } else {
-                            bonusHQProdutoividade = 1.0 + bonusHQ;
+                        // 1. Peso estratégico (fase + perfil)
+                        var pesoBase      = STRATEGIC_WEIGHT[state.phase][ed] || 1.0;
+                        var ajustePerfil  = profileWeights[ed] || 1.0;
+
+                        // 2. Retorno contínuo: minas e farm geram recursos indefinidamente
+                        var retornoFuturo = ['wood', 'stone', 'iron', 'farm'].includes(ed) ? 1.5 : 1.0;
+
+                        // 3. Urgência de produção: mina produzindo < 60% da média = elo mais fraco
+                        var urgênciaProdução = 1.0;
+                        if (['wood', 'stone', 'iron'].includes(ed)) {
+                            var _prodAtual = state.producao[ed] || 0;
+                            if (_prodMedia > 0 && _prodAtual < _prodMedia * 0.60) urgênciaProdução = 1.7;
+                            else if (_prodMedia > 0 && _prodAtual < _prodMedia * 0.80) urgênciaProdução = 1.3;
+                            if (_prodAtual < 200) urgênciaProdução = Math.max(urgênciaProdução, 1.5); // produção absoluta crítica
                         }
 
-                        // Sistema proativo de urgência para Farm e Storage (mesma lógica do milestone)
-                        var urgenciaGargaloGeral = 1.0;
+                        // 4. Urgência de gargalo atual (farm + overflow)
+                        var urgenciaGargalo = 1.0;
                         if (ed === 'farm') {
-                            if (nivelAlertaFarm === 'emergencia') urgenciaGargaloGeral = 2.0;
-                            else if (nivelAlertaFarm === 'prioridade_alta') urgenciaGargaloGeral = 1.5;
-                            else if (nivelAlertaFarm === 'preparacao') urgenciaGargaloGeral = 1.2;
-                            else if (nivelAlertaFarm === 'observacao') urgenciaGargaloGeral = 1.1;
+                            if (nivelAlertaFarm === 'emergencia')          urgenciaGargalo = 2.0;
+                            else if (nivelAlertaFarm === 'prioridade_alta') urgenciaGargalo = 1.5;
+                            else if (nivelAlertaFarm === 'preparacao')      urgenciaGargalo = 1.3;
+                            else if (nivelAlertaFarm === 'observacao')      urgenciaGargalo = 1.1;
                         }
                         if (riscoArmazem && ['wood', 'stone', 'iron'].includes(ed)) {
-                            if (tempoAteGargalo < 0.5) urgenciaGargaloGeral = 2.5;
-                            else if (tempoAteGargalo < 1.0) urgenciaGargaloGeral = 2.0;
-                            else if (tempoAteGargalo < 1.5) urgenciaGargaloGeral = 1.5;
-                            else urgenciaGargaloGeral = 1.2;
+                            var _uArm = tempoAteGargalo < 0.5 ? 2.5
+                                      : tempoAteGargalo < 1.0 ? 2.0
+                                      : tempoAteGargalo < 1.5 ? 1.5 : 1.2;
+                            urgenciaGargalo = Math.max(urgenciaGargalo, _uArm);
                         }
 
-                        var score = (pesoBase * ajustePerfil * bonusHQProdutoividade * urgenciaGargaloGeral) / (custoNormalizado * (nivelAtual + 1) * 0.1);
+                        // 5. Bônus de milestone: edifício no caminho do objetivo atual ganha ×1.8
+                        //    Outros ainda competem — mina com produção zero pode vencer
+                        var bonusMilestone = 1.0;
+                        if (activeMilestone && activeMilestone.reqs[ed]) {
+                            var _milNeed = activeMilestone.reqs[ed] - nivelAtual;
+                            if (_milNeed > 0) bonusMilestone = 1.8;
+                        }
 
-                        // Bônus adicional para marcos estratégicos do HQ
+                        // 6. HQ throughput multiplier
+                        var bonusHQProd = 1.0 + bonusHQ;
                         if (ed === 'main') {
-                            if (nivelAtual < 5) score *= 1.3;
-                            else if (nivelAtual >= 5 && nivelAtual < 10) score *= 1.2;
+                            var _bonusNext = HQ_PRODUCTIVITY_BONUS[nivelAtual + 1] || bonusHQ;
+                            var _ganho     = _bonusNext - bonusHQ;
+                            var _obras     = Math.max(6, 22 - nivelAtual);
+                            bonusHQProd = 1.0 + Math.max(bonusHQ * 3.0, _ganho * _obras);
                         }
+
+                        // 7. Bônus de pré-requisito: desbloqueia edifício importante
+                        var bonusPreReq = 0;
+                        for (var _otherEd in TW_BUILDING_REQS) {
+                            if (TW_BUILDING_REQS[_otherEd][ed] && !state.podeSerConstruido[_otherEd]) bonusPreReq += 0.2;
+                        }
+
+                        // SCORE UNIFICADO
+                        var score = (pesoBase * ajustePerfil * retornoFuturo * urgênciaProdução * urgenciaGargalo * bonusMilestone * bonusHQProd)
+                                  / (custoNormalizado * (nivelAtual + 1) * 0.1);
+                        score += bonusPreReq;
+
+                        // HQ milestone multipliers (zerado se travado)
+                        if (ed === 'main') {
+                            if (_HQ_LOCKED)           score *= 0.0;
+                            else if (nivelAtual < 5)  score *= 2.0;
+                            else if (nivelAtual < 10) score *= 1.6;
+                            else if (nivelAtual < 15) score *= 1.3;
+                            else if (nivelAtual < 20) score *= 1.15;
+                        }
+                        // Fila + recursos sobrando: HQ converte ociosidade em throughput permanente
+                        var _recursosSobrando = recursosPercent.wood > 0.70 && recursosPercent.stone > 0.70 && recursosPercent.iron > 0.70;
+                        if (ed === 'main' && state.filaBuilds >= 1 && _recursosSobrando) score *= 1.5;
+
+                        // RUSH DE CL (Manual 2026)
+                        var _stableLvl = parseInt(state.niveis['stable'] || 0);
+                        if (state.phase === 'EARLY' && _stableLvl >= 3) {
+                            if (ed === 'smith' || ed === 'stable') score *= 3.5;
+                            if (ed === 'iron')                     score *= 2.2;
+                            if (ed === 'main' && nivelAtual >= 10) score *= 0.4;
+                            else if (ed === 'main' && nivelAtual >= 5) score *= 0.65;
+                        }
+
+                        // Smith pronto (≥5) mas Estábulo ainda ausente: boost urgente
+                        var _smithPronto = parseInt(state.niveis['smith'] || 0) >= 5;
+                        if (state.phase === 'EARLY' && _smithPronto && _stLvl < 1 && ed === 'stable') score *= 4.0;
 
                         return { ed: ed, score: score };
                     });
 
-                    scoresGerais.sort((a, b) => b.score - a.score);
-                    selectedTarget = scoresGerais[0].ed;
-                    visHUD.gargalo = "OTIMIZAÇÃO";
-                    visHUD.motivo = "Melhor ROI: " + selectedTarget;
+                    unified.sort(function(a, b) { return b.score - a.score; });
+                    selectedTarget = unified[0].ed;
+
+                    // Tier: P3 se vencedor alinhado com milestone, P4 se venceu por score puro
+                    var _onMilestone = !!(activeMilestone && activeMilestone.reqs[selectedTarget] &&
+                                         (activeMilestone.reqs[selectedTarget] - parseInt(state.niveis[selectedTarget] || 0)) > 0);
+                    selectedTier = _onMilestone ? 'P3' : 'P4';
+                    selectedScoreMargin = unified.length > 1 ? unified[0].score - unified[1].score : unified[0].score;
+                    selectedAlternative = unified.length > 1 ? unified[1] : null;
+
+                    visHUD.gargalo = _onMilestone ? "SCORE UNIFICADO + MILESTONE" : "SCORE UNIFICADO";
+                    visHUD.motivo  = _onMilestone
+                        ? selectedTarget + " vence score global | Marco: " + activeMilestone.label
+                        : "Melhor ROI global: " + selectedTarget + " (" + unified[0].score.toFixed(1) + ")";
                 }
             }
             if (selectedTarget) {
@@ -2160,7 +2491,7 @@ function motorDeDecisaoMacro(state, villageId) {
                     visHUD.motivo = 'Target anterior falhou, evitando repetição';
                     // Não adicionar este target às tarefas
                 } else {
-                    tasks.push({ id: 'build_general', action: 'DO', target: selectedTarget });
+                    tasks.push({ id: 'build_general', action: 'DO', target: selectedTarget, tier: selectedTier, scoreMargin: selectedScoreMargin, alternative: selectedAlternative });
                     visHUD.acao = selectedTarget.toUpperCase();
                     HUD.set('build_general', 'running', 'Construindo ' + selectedTarget);
 
@@ -2182,6 +2513,20 @@ function motorDeDecisaoMacro(state, villageId) {
             if (lastTask.target) {
                 VillageMemory.set(villageId, 'lastTarget', lastTask.target);
             }
+        }
+
+        // RECOMPENSAS DE QUESTS
+        // Dispara quando a fila tem vaga mas não há target de construção (recursos insuficientes).
+        // A nova bgClaimQuestRewards faz POST direto — não precisa de popup nem pré-carregamento.
+        var _questCooldownKey = 'twbot_quest_claim_ts_' + state.villageId;
+        var _questCooldownOk  = (Date.now() - GM_getValue(_questCooldownKey, 0)) > 60000;
+        var _resourcesInsuf   = !selectedTarget && state.filaBuilds < maxFila && !noblingPrepBlocking;
+
+        if (_questCooldownOk && _resourcesInsuf) {
+            tasks.unshift({ id: 'claim_quest_rewards', action: 'DO' });
+            GM_setValue(_questCooldownKey, Date.now());
+            log('[motorDeDecisao] Recursos insuficientes — agendando coleta de recompensas de quests', 'info');
+            HUD.set('build_general', 'waiting', 'Buscando recompensas de quests...');
         }
 
         HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
@@ -2303,18 +2648,18 @@ function motorDeDecisaoMacro(state, villageId) {
         try {
             // Tentar obter do objeto Game se existir
             if (typeof Game !== 'undefined' && Game.village_id) {
-                villageId = Game.village_id;
+                villageId = normalizeVillageId(Game.village_id);
             } else {
                 // Fallback: extrair da URL ou do DOM
                 var urlMatch = window.location.href.match(/[?&]village=(\d+)/);
                 if (urlMatch) {
-                    villageId = parseInt(urlMatch[1]);
+                    villageId = urlMatch[1]; // regex já captura apenas dígitos
                 } else {
                     var villageEl = document.querySelector('#village_switch_left, #village_switch_right, .village_info .name');
                     if (villageEl && villageEl.href) {
                         var hrefMatch = villageEl.href.match(/[?&]village=(\d+)/);
                         if (hrefMatch) {
-                            villageId = parseInt(hrefMatch[1]);
+                            villageId = hrefMatch[1];
                         }
                     }
                 }
@@ -2425,10 +2770,10 @@ function motorDeDecisaoMacro(state, villageId) {
             // Obter CSRF do estado global ou do game_data
             var csrf = null;
             try {
-                if (typeof game_data !== 'undefined' && game_data.csrf) {
+                if (typeof unsafeWindow !== 'undefined' && unsafeWindow.game_data && unsafeWindow.game_data.csrf) {
+                    csrf = unsafeWindow.game_data.csrf;
+                } else if (typeof game_data !== 'undefined' && game_data && game_data.csrf) {
                     csrf = game_data.csrf;
-                } else if (window.TWBot && window.TWBot.state && window.TWBot.state[villageId]) {
-                    csrf = window.TWBot.state[villageId].csrf;
                 }
             } catch (e) {}
 
@@ -2488,57 +2833,251 @@ function motorDeDecisaoMacro(state, villageId) {
         var origin = window.location.origin;
         var mainUrl = origin + '/game.php?village=' + villageId + '&screen=main';
 
-        log('[ghost-build] Iniciando construção de ' + buildingName + ' via AJAX...');
-        HUD.set('build_general', 'running', 'Construindo ' + buildingName + '...');
+        log('[ghost-build] Verificando ' + buildingName + '...');
 
-        // Passo 1: Buscar a tela principal para pegar o CSRF atualizado
-        return gmGet(mainUrl).then(function(html) {
-            var csrf = extractCsrf(html);
-            try { if (!csrf && typeof game_data !== 'undefined' && game_data.csrf) csrf = game_data.csrf; } catch (e) {}
+        return twFetch(mainUrl, 'GET', null, false).then(function(html) {
+            // CSRF: unsafeWindow > game_data > extração do HTML
+            var csrf = (typeof unsafeWindow !== 'undefined' && unsafeWindow.game_data && unsafeWindow.game_data.csrf)
+                ? unsafeWindow.game_data.csrf
+                : ((typeof game_data !== 'undefined' && game_data && game_data.csrf)
+                    ? game_data.csrf
+                    : extractCsrf(html));
 
             if (!csrf) {
                 log('[ghost-build] CSRF não encontrado!', 'error');
                 HUD.set('build_general', 'error', 'Sem CSRF');
-                return false;
+                return { ok: false, reason: 'no_csrf' };
             }
 
-            // Passo 2: Enviar o POST de construção (Simula o clique no botão)
+            // Sinalização textual de recursos insuficientes no HTML
+            var noResText = html.indexOf('Pas assez de ressources') !== -1 ||
+                            html.indexOf('not enough resources')    !== -1 ||
+                            html.indexOf('recursos insuficientes')  !== -1;
+            if (noResText) {
+                log('[ghost-build] Recursos insuficientes para ' + buildingName + ' (texto servidor) — aguardando', 'info');
+                HUD.set('build_general', 'waiting', 'Aguardando recursos para ' + buildingName);
+                return { ok: false, reason: 'no_resources' };
+            }
+
+            // Validação DOM: extrair custos reais e comparar com recursos atuais
+            var mainDoc = new DOMParser().parseFromString(html, 'text/html');
+            var baseCosts = TW_BUILDING_COSTS[buildingName];
+            var costs = extractCosts(buildingName, mainDoc, baseCosts);
+            if (costs) {
+                log('[ghost-build] Custos: W=' + costs.wood + ' S=' + costs.stone + ' I=' + costs.iron + (costs.fromDOM ? ' (DOM)' : ' (tabela)'), 'debug');
+                var curWood = 0, curStone = 0, curIron = 0;
+                try {
+                    var win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+                    curWood  = parseInt(win.game_data.village.wood  || 0) || 0;
+                    curStone = parseInt(win.game_data.village.stone || 0) || 0;
+                    curIron  = parseInt(win.game_data.village.iron  || 0) || 0;
+                } catch(e) {
+                    var spW = mainDoc.querySelector('#wood, #wood_current, .wood_current');
+                    var spS = mainDoc.querySelector('#stone, #stone_current, .stone_current');
+                    var spI = mainDoc.querySelector('#iron, #iron_current, .iron_current');
+                    curWood  = spW ? parseInt((spW.textContent || '').replace(/\D/g, '')) || 0 : 0;
+                    curStone = spS ? parseInt((spS.textContent || '').replace(/\D/g, '')) || 0 : 0;
+                    curIron  = spI ? parseInt((spI.textContent || '').replace(/\D/g, '')) || 0 : 0;
+                }
+                if ((curWood > 0 || curStone > 0 || curIron > 0) &&
+                    (costs.wood > curWood || costs.stone > curStone || costs.iron > curIron)) {
+                    log('[ghost-build] Recursos insuficientes para ' + buildingName + ' (validação interna) — aguardando', 'info');
+                    HUD.set('build_general', 'waiting', 'Aguardando recursos para ' + buildingName);
+                    // Delta detectado entre custo estimado e custo real: forçar recalibração
+                    (function() {
+                        var _bs = {}; try { _bs = JSON.parse(GM_getValue('twbot_build_stats', '{}') || '{}'); } catch(e) {}
+                        _bs.attempts    = (_bs.attempts    || 0) + 1;
+                        _bs.no_resources = (_bs.no_resources || 0) + 1;
+                        if (_bs.no_resources >= 3 && _bs.no_resources / _bs.attempts > 0.3) {
+                            GM_setValue('twbot_force_rescrape', 1);
+                            _bs.no_resources = 0; _bs.attempts = 0; // reset após trigger
+                            log('[costs-scraper] Taxa de confirmação baixa — revalidação de custos agendada', 'warning');
+                        }
+                        GM_setValue('twbot_build_stats', JSON.stringify(_bs));
+                    })();
+                    return { ok: false, reason: 'no_resources' };
+                }
+            }
+
             var buildUrl = origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=upgrade_building&type=main';
             var body = 'id=' + buildingName + '&force=1&destroy=0&source=' + villageId + '&h=' + csrf;
+
+            HUD.set('build_general', 'running', 'Construindo ' + buildingName);
 
             return twFetch(buildUrl, 'POST', body).then(function(resp) {
                 var success = false;
                 var errorMsg = '';
-
                 try {
                     var json = JSON.parse(resp);
-                    // O TW geralmente retorna { success: true } ou { error: "Mensagem" }
-                    if (json.success) {
-                        success = true;
-                    } else if (json.error) {
-                        errorMsg = json.error;
-                    }
+                    success = !!(json.success || json.order_id);
+                    if (!success && json.error) errorMsg = json.error;
                 } catch (e) {
-                    // Se não for JSON, verifica se a página retornou sucesso por texto
-                    success = resp.indexOf('Construção iniciada') !== -1 || resp.indexOf('success') !== -1;
+                    success = resp.indexOf('success') !== -1 || resp.indexOf('order') !== -1;
                 }
 
                 if (success) {
-                    log('[ghost-build] Sucesso! ' + buildingName + ' enfileirado.', 'success');
+                    log('[ghost-build] ' + buildingName + ' enfileirado com sucesso', 'success');
                     HUD.set('build_general', 'done', buildingName + ' enfileirado!');
-                    VillageMemory.recordSuccess(villageId, buildingName);
-                    return true;
+                    (function() {
+                        var _bs = {}; try { _bs = JSON.parse(GM_getValue('twbot_build_stats', '{}') || '{}'); } catch(e) {}
+                        _bs.attempts  = (_bs.attempts  || 0) + 1;
+                        _bs.confirmed = (_bs.confirmed || 0) + 1;
+                        GM_setValue('twbot_build_stats', JSON.stringify(_bs));
+                    })();
+                    return { ok: true };
                 } else {
-                    log('[ghost-build] Falha ao construir ' + buildingName + '. Erro: ' + errorMsg, 'error');
-                    HUD.set('build_general', 'error', 'Falha: ' + errorMsg);
-                    VillageMemory.recordError(villageId, buildingName, 'build_fail');
-                    return false;
+                    log('[ghost-build] Falha ao construir ' + buildingName + (errorMsg ? ': ' + errorMsg : ''), 'error');
+                    HUD.set('build_general', 'error', 'Falha: ' + (errorMsg || 'sem detalhes'));
+                    return { ok: false, reason: 'build_fail' };
                 }
             });
         }).catch(function(e) {
             log('[ghost-build] Erro de rede: ' + e.message, 'error');
-            return false;
+            return { ok: false, reason: 'network_error' };
         });
+    }
+
+    // ============================================================
+    // EXECUTOR CANÔNICO DE BUILD — pipeline unificado
+    // Substitui: bgUpgradeBuilding + bgBuildGeneric + clicarBotaoConstruir
+    // plan: { villageId, building }
+    // Retorna Promise<{ ok: boolean, reason: string }>
+    // Estratégia: GET main (CSRF+custo) → AJAX POST → fallback DOM click
+    // ============================================================
+    async function executeBuildPlan(plan) {
+        var villageId = plan.villageId;
+        var building  = plan.building;
+        var origin    = window.location.origin;
+        var mainUrl   = origin + '/game.php?village=' + villageId + '&screen=main';
+
+        log('[build] executeBuildPlan → ' + building, 'info');
+
+        // ── Etapa 1: GET main — CSRF fresco + validação de custos ──
+        var html;
+        try {
+            html = await twFetch(mainUrl, 'GET', null, false);
+        } catch (e) {
+            log('[build] Erro de rede (GET main): ' + e.message, 'error');
+            return { ok: false, reason: 'network_error' };
+        }
+
+        // CSRF: unsafeWindow > game_data > extração do HTML
+        var csrf = (typeof unsafeWindow !== 'undefined' && unsafeWindow.game_data && unsafeWindow.game_data.csrf)
+            ? unsafeWindow.game_data.csrf
+            : ((typeof game_data !== 'undefined' && game_data && game_data.csrf)
+                ? game_data.csrf
+                : extractCsrf(html));
+
+        if (!csrf) {
+            log('[build] CSRF não encontrado!', 'error');
+            HUD.set('build_general', 'error', 'Sem CSRF');
+            return { ok: false, reason: 'no_csrf' };
+        }
+
+        // Sinalização textual de recursos insuficientes no HTML
+        if (html.indexOf('Pas assez de ressources') !== -1 ||
+            html.indexOf('not enough resources')    !== -1 ||
+            html.indexOf('recursos insuficientes')  !== -1) {
+            log('[build] Recursos insuficientes para ' + building + ' (texto servidor)', 'info');
+            HUD.set('build_general', 'waiting', 'Aguardando recursos para ' + building);
+            return { ok: false, reason: 'no_resources' };
+        }
+
+        // Validação DOM: custos reais vs recursos atuais
+        var mainDoc = new DOMParser().parseFromString(html, 'text/html');
+        var baseCosts = TW_BUILDING_COSTS[building];
+        var costs = extractCosts(building, mainDoc, baseCosts);
+        if (costs) {
+            log('[build] Custos: W=' + costs.wood + ' S=' + costs.stone + ' I=' + costs.iron + (costs.fromDOM ? ' (DOM)' : ' (tabela)'), 'debug');
+            var curWood = 0, curStone = 0, curIron = 0;
+            try {
+                var _win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+                curWood  = parseInt(_win.game_data.village.wood  || 0) || 0;
+                curStone = parseInt(_win.game_data.village.stone || 0) || 0;
+                curIron  = parseInt(_win.game_data.village.iron  || 0) || 0;
+            } catch(e) {
+                var _spW = mainDoc.querySelector('#wood, #wood_current, .wood_current');
+                var _spS = mainDoc.querySelector('#stone, #stone_current, .stone_current');
+                var _spI = mainDoc.querySelector('#iron, #iron_current, .iron_current');
+                curWood  = _spW ? parseInt((_spW.textContent || '').replace(/\D/g, '')) || 0 : 0;
+                curStone = _spS ? parseInt((_spS.textContent || '').replace(/\D/g, '')) || 0 : 0;
+                curIron  = _spI ? parseInt((_spI.textContent || '').replace(/\D/g, '')) || 0 : 0;
+            }
+            if ((curWood > 0 || curStone > 0 || curIron > 0) &&
+                (costs.wood > curWood || costs.stone > curStone || costs.iron > curIron)) {
+                log('[build] Recursos insuficientes para ' + building + ' (validação interna)', 'info');
+                HUD.set('build_general', 'waiting', 'Aguardando recursos para ' + building);
+                // Revalidação de custos se taxa de falha por recursos for alta
+                (function() {
+                    var _bs = {}; try { _bs = JSON.parse(GM_getValue('twbot_build_stats', '{}') || '{}'); } catch(e) {}
+                    _bs.attempts     = (_bs.attempts     || 0) + 1;
+                    _bs.no_resources = (_bs.no_resources || 0) + 1;
+                    if (_bs.no_resources >= 3 && _bs.no_resources / _bs.attempts > 0.3) {
+                        GM_setValue('twbot_force_rescrape', 1);
+                        _bs.no_resources = 0; _bs.attempts = 0;
+                        log('[build] Taxa de confirmação baixa — revalidação de custos agendada', 'warning');
+                    }
+                    GM_setValue('twbot_build_stats', JSON.stringify(_bs));
+                })();
+                return { ok: false, reason: 'no_resources' };
+            }
+        }
+
+        // ── Etapa 2: AJAX ghost-build (caminho primário) ──
+        var buildUrl = origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=upgrade_building&type=main';
+        var body     = 'id=' + building + '&force=1&destroy=0&source=' + villageId + '&h=' + csrf;
+
+        HUD.set('build_general', 'running', 'Construindo ' + building);
+
+        var ajaxOk = false;
+        var errorMsg = '';
+        try {
+            var resp = await twFetch(buildUrl, 'POST', body);
+            try {
+                var json = JSON.parse(resp);
+                ajaxOk = !!(json.success || json.order_id);
+                if (!ajaxOk && json.error) errorMsg = json.error;
+            } catch (e) {
+                ajaxOk = resp.indexOf('success') !== -1 || resp.indexOf('order') !== -1;
+            }
+        } catch (e) {
+            log('[build] Erro de rede (AJAX POST): ' + e.message, 'error');
+        }
+
+        if (ajaxOk) {
+            log('[build] ' + building + ' enfileirado via AJAX', 'success');
+            HUD.set('build_general', 'done', building + ' enfileirado!');
+            (function() {
+                var _bs = {}; try { _bs = JSON.parse(GM_getValue('twbot_build_stats', '{}') || '{}'); } catch(e) {}
+                _bs.attempts  = (_bs.attempts  || 0) + 1;
+                _bs.confirmed = (_bs.confirmed || 0) + 1;
+                GM_setValue('twbot_build_stats', JSON.stringify(_bs));
+            })();
+            VillageMemory.recordSuccess(villageId, building);
+            return { ok: true, reason: 'ajax' };
+        }
+
+        // ── Etapa 3: Fallback — clique DOM ──
+        log('[build] AJAX falhou (' + (errorMsg || 'sem detalhes') + ') — fallback DOM click...', 'warning');
+        var domOk = false;
+        try {
+            domOk = await clicarBotaoConstruir(building);
+        } catch (e) {
+            log('[build] Erro no clique DOM: ' + e.message, 'error');
+        }
+
+        if (domOk) {
+            log('[build] ' + building + ' enfileirado via clique DOM', 'success');
+            HUD.set('build_general', 'done', building + ' enfileirado (DOM)!');
+            VillageMemory.recordSuccess(villageId, building);
+            return { ok: true, reason: 'dom_click' };
+        }
+
+        // ── Falha total ──
+        log('[build] Falha total para ' + building + (errorMsg ? ': ' + errorMsg : ''), 'error');
+        HUD.set('build_general', 'error', 'Falha: ' + (errorMsg || 'sem detalhes'));
+        VillageMemory.recordError(villageId, building, 'build_fail');
+        return { ok: false, reason: 'build_fail' };
     }
 
    // ============================================================
@@ -2548,21 +3087,11 @@ function motorDeDecisaoMacro(state, villageId) {
         // Busca o CSRF mais atualizado diretamente do objeto do jogo para não usar token velho
         var activeCsrf = (typeof unsafeWindow !== 'undefined' && unsafeWindow.game_data)
             ? unsafeWindow.game_data.csrf
-            : (game_data ? game_data.csrf : csrf);
+            : (typeof game_data !== 'undefined' && game_data ? game_data.csrf : csrf);
 
-        log('[rush] === INICIANDO RUSH ===', 'info');
-        log('[rush] VillageID: ' + villageId, 'info');
-        log('[rush] OrderID: ' + orderId, 'info');
-        log('[rush] CSRF Ativo: ' + activeCsrf, 'info');
-
-        // Estrutura idêntica ao log capturado
         var url = window.location.origin + '/game.php?village=' + villageId + '&screen=main&ajaxaction=build_order_reduce&h=' + activeCsrf + '&id=' + orderId + '&destroy=0';
 
-        log('[rush] URL completa: ' + url, 'info');
-        log('[rush] Disparando finalização instantânea para ID: ' + orderId, 'info');
-
         return twFetch(url, 'GET').then(resp => {
-            log('[rush] Resposta bruta do servidor: ' + resp.substring(0, 200), 'info');
 
             try {
                 var json = JSON.parse(resp);
@@ -2595,7 +3124,328 @@ function motorDeDecisaoMacro(state, villageId) {
             return false;
         });
     }
+    function bgRushKnight(villageId, knightId, csrf) {
+        var origin = window.location.origin;
+        var activeCsrf = (typeof unsafeWindow !== 'undefined' && unsafeWindow.game_data)
+            ? unsafeWindow.game_data.csrf
+            : (typeof game_data !== 'undefined' && game_data ? game_data.csrf : csrf);
+
+        log('[knight-rush] Disparando rush no paladino ID: ' + knightId, 'info');
+        HUD.set('knight', 'running', 'Finalizando paladino...');
+
+        var rushUrl  = origin + '/game.php?village=' + villageId + '&screen=statue&ajaxaction=recruit_rush';
+        var rushBody = 'knight=' + knightId + '&home=' + villageId + '&h=' + activeCsrf;
+
+        return twFetch(rushUrl, 'POST', rushBody).then(function(resp) {
+            try {
+                var json = JSON.parse(resp);
+                if (json.success) {
+                    log('[knight-rush] Paladino finalizado instantaneamente!', 'success');
+                    GM_setValue('knight_done_' + villageId, Date.now());
+                    HUD.set('knight', 'done', 'Recrutado!');
+                    return true;
+                }
+                log('[knight-rush] Servidor recusou rush: ' + JSON.stringify(json).slice(0, 100), 'warning');
+                return false;
+            } catch (e) {
+                if (resp.indexOf('success') !== -1) {
+                    log('[knight-rush] Rush concluído (texto).', 'success');
+                    return true;
+                }
+                log('[knight-rush] Resposta inválida: ' + resp.slice(0, 80), 'error');
+                return false;
+            }
+        }).catch(function(err) {
+            log('[knight-rush] Erro de rede: ' + err.message, 'error');
+            return false;
+        });
+    }
+
+    // ============================================================
+    // RECOMPENSAS DE QUESTS — coleta automática com proteção contra overflow
+    // ============================================================
+
+    /**
+     * Parseia o HTML do popup de quests (screen=new_quests&ajax=quest_popup)
+     * e retorna lista de recompensas disponíveis com seus IDs e quantidades de recursos.
+     * Suporta resposta JSON ou HTML (estrutura TW 10.x).
+     */
+    function parseQuestRewards(html) {
+        if (!html) return [];
+        var rewards = [];
+
+        // Tentativa 1: JSON direto
+        try {
+            var json = JSON.parse(html);
+            var list = json.rewards || json.quest_rewards || json.data || json.items || [];
+            if (Array.isArray(list)) {
+                var mapped = list.map(function(r) {
+                    return {
+                        id:    String(r.reward_id || r.id || r.quest_id || ''),
+                        wood:  parseInt(r.wood  || (r.resources && r.resources.wood)  || 0) || 0,
+                        stone: parseInt(r.stone || (r.resources && r.resources.stone) || 0) || 0,
+                        iron:  parseInt(r.iron  || (r.resources && r.resources.iron)  || 0) || 0
+                    };
+                }).filter(function(r) { return r.id; });
+                if (mapped.length) return mapped;
+            }
+        } catch(e) {}
+
+        // Tentativa 2: HTML parsing ampliado (nova estrutura TW)
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        doc.querySelectorAll('.quest-reward, .reward-item, [data-reward-id], form[action*="claim"], .reward-row, tr.reward').forEach(function(el) {
+            var idInput = el.querySelector('input[name="reward_id"], input[name="id"]');
+            var formInput = el.closest && el.closest('form') && el.closest('form').querySelector('input[name="reward_id"]');
+            var id = el.getAttribute('data-reward-id')
+                  || (idInput && idInput.value)
+                  || (formInput && formInput.value);
+            if (!id) {
+                var a = el.href ? el : (el.querySelector && el.querySelector('a'));
+                var m = a && (a.href || '').match(/reward_id=(\d+)/i);
+                if (m) id = m[1];
+            }
+            if (!id || isNaN(id)) return;
+            var res = { wood: 0, stone: 0, iron: 0 };
+            ['wood', 'stone', 'iron'].forEach(function(type) {
+                el.querySelectorAll('.' + type + ', [class*="' + type + '"], .res_' + type).forEach(function(e) {
+                    var n = parseInt((e.textContent || '').replace(/[^0-9]/g, '')) || 0;
+                    if (n > res[type]) res[type] = n;
+                });
+            });
+            rewards.push({ id: String(id), wood: res.wood, stone: res.stone, iron: res.iron });
+        });
+
+        // Tentativa 3: fallback — qualquer link com reward_id
+        if (rewards.length === 0) {
+            doc.querySelectorAll('a[href*="reward_id="]').forEach(function(el) {
+                var m = (el.href || '').match(/reward_id=(\d+)/i);
+                if (m) rewards.push({ id: m[1], wood: 0, stone: 0, iron: 0 });
+            });
+        }
+
+        log('[quest-rewards] Parse: ' + rewards.length + ' recompensas encontradas', rewards.length ? 'success' : 'warning');
+        return rewards;
+    }
+
+    /**
+     * Reivindica as recompensas de quests que NÃO causariam overflow no armazém.
+     * Se state.questRewards estiver vazio (TTL impediu o pre-fetch), busca o popup
+     * ativamente via twFetch antes de tentar reivindicar.
+     * Usa twFetch (fetch nativo, credentials:include) — mesmo padrão de bgUpgradeBuilding.
+     */
+    // ============================================================
+    // QUEST REWARDS — abordagem híbrida confirmada pelo spy:
+    // GET  ajax=quest_popup  → extrai reward_ids do HTML/DOM
+    // POST ajax=claim_reward → body: reward_id={id}&h={csrf}
+    // ============================================================
+    function bgClaimQuestRewards(villageId, csrf, cachedRewards) {
+        log('[quest-rewards] Iniciando coleta (híbrido showDialog + POST)...', 'info');
+        HUD.set('build_general', 'running', 'Coletando recompensas de quests...');
+
+        var win    = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+        var origin = window.location.origin;
+        var claimUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=claim_reward';
+
+        // Extrai reward_ids de um elemento raiz (DOM ou documento parseado)
+        function extractRewardIds(root) {
+            var ids = [];
+            var add = function(v) { if (v && !ids.includes(String(v))) ids.push(String(v)); };
+            root.querySelectorAll('input[name="reward_id"]').forEach(function(el) { add(el.value); });
+            root.querySelectorAll('[data-reward-id]').forEach(function(el) { add(el.getAttribute('data-reward-id')); });
+            root.querySelectorAll('[onclick*="reward_id"]').forEach(function(el) {
+                var m = (el.getAttribute('onclick') || '').match(/reward_id[^\d]*(\d+)/i);
+                if (m) add(m[1]);
+            });
+            root.querySelectorAll('a[href*="reward_id="]').forEach(function(el) {
+                var m = (el.href || '').match(/reward_id=(\d+)/i);
+                if (m) add(m[1]);
+            });
+            return ids;
+        }
+
+        // Passo 1: Chamar Questlines.showDialog (usa XHR nativo do jogo — funciona sem o modal visível)
+        // e aguardar tab_loaded['main-tab'] = true (confirma que o HTML do popup está no DOM)
+        var dialogPromise = new Promise(function(resolve) {
+            if (win.Questlines && typeof win.Questlines.showDialog === 'function') {
+                log('[quest-rewards] Questlines.showDialog(0, main-tab)...', 'info');
+                win.Questlines.showDialog(0, 'main-tab');
+                var elapsed = 0;
+                var poll = setInterval(function() {
+                    elapsed += 250;
+                    var loaded = win.Questlines.tab_loaded && win.Questlines.tab_loaded['main-tab'];
+                    if (loaded || elapsed >= 8000) {
+                        clearInterval(poll);
+                        log('[quest-rewards] tab_loaded=' + !!loaded + ' após ' + elapsed + 'ms', 'info');
+                        setTimeout(resolve, 400);
+                    }
+                }, 250);
+            } else {
+                log('[quest-rewards] Questlines indisponível, tentando gmGet...', 'warning');
+                resolve();
+            }
+        });
+
+        return dialogPromise.then(function() {
+            // Passo 2: Tentar extrair reward_ids do DOM (popup já deve estar no DOM)
+            var rewardIds = extractRewardIds(document);
+            log('[quest-rewards] DOM scan: ' + rewardIds.length + ' reward_id(s) → [' + rewardIds.join(', ') + ']', 'info');
+
+            // Fallback A: usar cachedRewards do collectVillageState
+            if (rewardIds.length === 0 && cachedRewards && cachedRewards.length > 0) {
+                rewardIds = cachedRewards.map(function(r) { return String(r.id); }).filter(Boolean);
+                log('[quest-rewards] Usando ' + rewardIds.length + ' IDs do pré-fetch.', 'info');
+                return Promise.resolve(rewardIds);
+            }
+
+            // Fallback B: GET via GM_xmlhttpRequest (mesmo contexto do XHR do jogo)
+            if (rewardIds.length === 0) {
+                var questUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=quest_popup&tab=main-tab&quest=0';
+                log('[quest-rewards] Fallback gmGet quest_popup...', 'info');
+                return gmGet(questUrl, false).then(function(html) {
+                    if (html && !html.includes('"redirect"')) {
+                        var doc = new DOMParser().parseFromString(html, 'text/html');
+                        rewardIds = extractRewardIds(doc);
+                        if (rewardIds.length === 0) {
+                            rewardIds = parseQuestRewards(html).map(function(r) { return r.id; }).filter(Boolean);
+                        }
+                        log('[quest-rewards] gmGet encontrou ' + rewardIds.length + ' reward_id(s).', rewardIds.length ? 'success' : 'warning');
+                    } else {
+                        log('[quest-rewards] gmGet retornou redirect — sem quests disponíveis.', 'warning');
+                    }
+                    return rewardIds;
+                }).catch(function(e) {
+                    log('[quest-rewards] gmGet falhou: ' + e.message, 'error');
+                    return [];
+                });
+            }
+
+            return Promise.resolve(rewardIds);
+
+        }).then(function(rewardIds) {
+            if (!rewardIds || rewardIds.length === 0) {
+                log('[quest-rewards] Nenhum reward_id encontrado.', 'info');
+                HUD.set('build_general', 'idle', 'Sem recompensas disponíveis');
+                return { claimed: 0 };
+            }
+
+            log('[quest-rewards] Coletando ' + rewardIds.length + ' reward(s) via POST ajax=claim_reward...', 'info');
+            var claimed = 0;
+
+            // Passo 3: POST sequencial para cada reward_id (endpoint confirmado pelo spy)
+            return rewardIds.reduce(function(chain, rewardId) {
+                return chain.then(function() {
+                    return new Promise(function(resolve) {
+                        setTimeout(function() {
+                            var body = 'reward_id=' + encodeURIComponent(rewardId) + '&h=' + encodeURIComponent(csrf);
+                            twFetch(claimUrl, 'POST', body, false)
+                                .then(function(resp) {
+                                    var json = null;
+                                    try { json = JSON.parse(resp || '{}'); } catch(e) {}
+                                    var ok = json
+                                        ? (json.success || json.ok || json.claimed || (!json.error && !json.redirect))
+                                        : (resp && !resp.toLowerCase().includes('error'));
+                                    if (ok) {
+                                        claimed++;
+                                        log('[quest-rewards] reward_id=' + rewardId + ' coletado!', 'success');
+                                    } else {
+                                        log('[quest-rewards] Recusado reward_id=' + rewardId + ': ' + (resp || '').slice(0, 100), 'warning');
+                                    }
+                                    resolve();
+                                })
+                                .catch(function(e) {
+                                    log('[quest-rewards] Erro POST reward_id=' + rewardId + ': ' + e.message, 'error');
+                                    resolve();
+                                });
+                        }, 600);
+                    });
+                });
+            }, Promise.resolve()).then(function() {
+                if (claimed > 0) {
+                    log('[quest-rewards] ' + claimed + ' recompensa(s) coletada(s)!', 'success');
+                    HUD.set('build_general', 'done', claimed + ' recompensa(s) coletada(s)!');
+                    RequestCache.clear();
+                } else {
+                    HUD.set('build_general', 'idle', 'Sem recompensas aceitas pelo servidor');
+                }
+                return { claimed: claimed };
+            });
+
+        }).catch(function(e) {
+            log('[quest-rewards] Erro crítico: ' + e.message, 'error');
+            HUD.set('build_general', 'error', 'Erro quest-rewards');
+            return { claimed: 0 };
+        });
+    }
+
+    // ============================================================
+    // CÁLCULO DE CONFIANÇA — modo observação
+    // task: objeto de tarefa anotado pelo motor
+    // state: estado da aldeia (para executabilidade e custo calibrado)
+    // Retorna { score: 0-99, razao: string }
+    // ============================================================
+    function calcularConfianca(task, state) {
+        if (!task) return { score: 100, razao: 'Aldeia estável — sem ações pendentes' };
+
+        if (task.id === 'build_rush' || task.id === 'knight_rush') {
+            return { score: 98, razao: 'Rush confirmado: obra já em fila, custo zero' };
+        }
+        if (task.id === 'claim_quest_rewards') {
+            return { score: 82, razao: 'Recompensas de quest disponíveis — baixo risco' };
+        }
+        if (task.id === 'flag') {
+            return { score: 88, razao: 'Bandeira não atribuída — ação de baixo risco' };
+        }
+        if (task.id === 'statue' || task.id === 'knight') {
+            return { score: 85, razao: 'Recrutamento disponível e confirmado pelo DOM' };
+        }
+        if (task.id === 'build_general') {
+            var tierBase = { P0: 95, P_NOBLING: 93, P1B: 92, P1C: 90, P2: 85, P3: 75, P3_5: 80, P4: 68 };
+            var conf = tierBase[task.tier] || 68;
+            var parts = [];
+
+            // Tier label legível
+            var tierLabels = {
+                P0: 'Pop emergência (95%+)',
+                P_NOBLING: 'Nobling prep',
+                P1B: 'Armazém crítico (<1.5h)',
+                P1C: 'Pop prioridade (92-95%)',
+                P2: 'Anti-overflow rápido',
+                P3: 'Marco estratégico',
+                P3_5: 'Farm preventivo (88-92%)',
+                P4: 'Otimização por score'
+            };
+            parts.push(tierLabels[task.tier] || 'Score geral');
+
+            // Margem sobre o 2º colocado (aplica apenas para P3/P4 onde há competição)
+            if ((task.tier === 'P3' || task.tier === 'P4') && task.scoreMargin > 0) {
+                var marginBonus = Math.min(15, Math.floor(task.scoreMargin / 5));
+                conf += marginBonus;
+                if (marginBonus >= 5) parts.push('margem clara (+' + task.scoreMargin.toFixed(1) + ')');
+            }
+
+            // Executabilidade confirmada pelo DOM
+            if (state.buildCandidatesDOM && state.buildCandidatesDOM.indexOf(task.target) !== -1) {
+                conf += 4;
+                parts.push('DOM confirma');
+            }
+
+            // Confiança na calibração de custo
+            try {
+                var _ctxKey = getCostContextKey(state.villageId || '');
+                var _confData = JSON.parse(GM_getValue('twbot_cost_confidence_' + _ctxKey, '{}') || '{}');
+                var _cScore = (_confData[task.target] || {}).score || 0;
+                if (_cScore >= 60) { conf += 3; }
+                else if (_cScore < 20) { conf -= 8; parts.push('custo estimado (dados escassos)'); }
+            } catch(e) {}
+
+            return { score: Math.max(10, Math.min(99, conf)), razao: parts.join(' | ') };
+        }
+        return { score: 75, razao: 'Ação de suporte' };
+    }
+
     function runChecklist(villageId) {
+        villageId = normalizeVillageId(villageId);
+        if (!villageId) { log('[runChecklist] villageId inválido, abortando', 'error'); return; }
         HUD.init();
 
         // Aplicar soft reset se necessário
@@ -2604,7 +3454,7 @@ function motorDeDecisaoMacro(state, villageId) {
         // Verificar se aldeia pode executar ações (actionLock + cooldown)
         if (!VillageMemory.canAct(villageId)) {
             log('[runChecklist] Aldeia ' + villageId + ' em cooldown ou bloqueada, aguardando...', 'warning');
-            setTimeout(() => runChecklist(villageId), CONFIG.mainLoopInterval);
+            setTimeout(() => runChecklist(villageId), CONFIG.mainLoopInterval + Math.floor(Math.random() * 4000) - 2000);
             return;
         }
 
@@ -2620,11 +3470,35 @@ function motorDeDecisaoMacro(state, villageId) {
 
                 var queue = tasks.filter(t => t.action === 'DO');
 
+                // ── MODO OBSERVAÇÃO: analisa, exibe, não executa ──
+                if (CONFIG.observationMode) {
+                    VillageMemory.releaseLock(villageId);
+                    var _obsTask = queue.find(function(t) {
+                        return t.id === 'build_general' || t.id === 'build_rush' || t.id === 'knight_rush' || t.id === 'flag' || t.id === 'statue' || t.id === 'knight';
+                    });
+                    var _conf = calcularConfianca(_obsTask, state);
+                    var _alvoNivel = (_obsTask && _obsTask.target && state.niveis)
+                        ? (parseInt(state.niveis[_obsTask.target] || 0) + 1) : null;
+                    var _altNivel = (_obsTask && _obsTask.alternative && _obsTask.alternative.ed && state.niveis)
+                        ? (parseInt(state.niveis[_obsTask.alternative.ed] || 0) + 1) : null;
+                    HUD.showObsReport({
+                        alvo:        _obsTask ? (_obsTask.target || _obsTask.id) : 'Nenhuma',
+                        nivel:       _alvoNivel,
+                        confianca:   _conf.score,
+                        razao:       _conf.razao,
+                        alternativa: _obsTask && _obsTask.alternative ? _obsTask.alternative.ed : null,
+                        altNivel:    _altNivel
+                    });
+                    log('[obs] Análise: ' + (_obsTask ? _obsTask.target || _obsTask.id : 'nada') + ' — confiança ' + _conf.score + '% (' + _conf.razao + ')', 'info');
+                    setTimeout(() => runChecklist(villageId), CONFIG.mainLoopInterval + Math.floor(Math.random() * 4000) - 2000);
+                    return;
+                }
+
                 function execNext(i) {
                     if (i >= queue.length) {
                         // Liberar lock ao finalizar todas as tarefas
                         VillageMemory.releaseLock(villageId);
-                        var wait = queue.length > 0 ? 5000 : CONFIG.mainLoopInterval;
+                        var wait = queue.length > 0 ? 5000 : CONFIG.mainLoopInterval + Math.floor(Math.random() * 4000) - 2000;
                         setTimeout(() => runChecklist(villageId), wait);
                         return;
                     }
@@ -2655,26 +3529,12 @@ function motorDeDecisaoMacro(state, villageId) {
                             });
                     }
                     else if (task.id === 'build_general') {
-                        // Verificar se target está bloqueado
                         if (VillageMemory.isTargetBlocked(villageId, task.target)) {
                             log('[executor] Target ' + task.target + ' está bloqueado, pulando', 'warning');
                             p = Promise.resolve(false);
-                        }
-                        // NOVA ABORDAGEM: Usa a função bgUpgradeBuilding (AJAX FANTASMA) para construir em segundo plano
-                        // sem depender do DOM ou clicar no botão
-                        else {
-                            // Chama a função fantasma em vez de procurar o botão no DOM
-                            p = bgUpgradeBuilding(villageId, task.target)
-                                .then(function(success) {
-                                    if (success) {
-                                        log('[executor] ' + task.target + ' iniciado com sucesso!', 'success');
-                                        VillageMemory.recordSuccess(villageId, task.target);
-                                    } else {
-                                        log('[executor] Falha ao iniciar ' + task.target + ', registrando erro', 'error');
-                                        VillageMemory.recordError(villageId, task.target, 'build_fail');
-                                    }
-                                    return success;
-                                });
+                        } else {
+                            p = executeBuildPlan({ villageId: villageId, building: task.target })
+                                .then(function(result) { return result && result.ok; });
                         }
                     }
                     else if (task.id === 'statue') {
@@ -2700,14 +3560,31 @@ function motorDeDecisaoMacro(state, villageId) {
                             });
                     }
                     else if (task.id === 'flag') {
-                        p = bgAssignFlagGhost(villageId, state.phase)
-                            .then(function(success) {
-                                if (success) {
+                        p = bgAssignFlagGhost(villageId, state.phase, task.ctx)
+                            .then(function(res) {
+                                if (res && res.ok) {
                                     VillageMemory.recordSuccess(villageId, 'flag');
                                 } else {
                                     VillageMemory.recordError(villageId, 'flag', 'flag_fail');
                                 }
-                                return success;
+                                return res;
+                            });
+                    }
+                    else if (task.id === 'claim_quest_rewards') {
+                        var _questCsrf = state.csrf || '';
+                        try {
+                            var _qw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+                            _questCsrf = (_qw.game_data && _qw.game_data.csrf) || _questCsrf;
+                        } catch(e) {}
+                        p = bgClaimQuestRewards(villageId, _questCsrf, state.questRewards)
+                            .then(function(result) {
+                                if (result.claimed > 0) {
+                                    VillageMemory.recordSuccess(villageId, 'quest_rewards');
+                                    log('[motorDeDecisao] Recursos de quest injetados! Reavaliando no próximo ciclo...', 'success');
+                                } else {
+                                    log('[motorDeDecisao] Sem recompensas de quest disponíveis no momento.', 'info');
+                                }
+                                return result;
                             });
                     }
 
@@ -2721,6 +3598,10 @@ function motorDeDecisaoMacro(state, villageId) {
                 }
                 execNext(0);
             });
+        }).catch(function(err) {
+            VillageMemory.releaseLock(villageId);
+            log('[runChecklist] Falha crítica: ' + (err && err.message || err), 'error');
+            setTimeout(function() { runChecklist(villageId); }, CONFIG.mainLoopInterval + Math.floor(Math.random() * 4000) - 2000);
         });
     }
     // ============================================================
@@ -2918,65 +3799,73 @@ function motorDeDecisaoMacro(state, villageId) {
 
         // Calcular score de urgência para uma aldeia
         calculateUrgencyScore: function(villageId, state) {
-            if (!state) return 50; // Score padrão se não houver estado
+            if (!state) return 50;
 
-            var score = 50;
             var mem = VillageMemory.get(villageId);
+            var _premium = state.premium || {};
+            var _rushIds = state.rushIds || [];
+            var _knight  = state.knight  || {};
+            var _pop = state.populacao || { current: 0, max: 1 };
+            var _res = state.recursos  || { wood: 0, stone: 0, iron: 0, max: 1 };
 
-            // Fatores que aumentam urgência:
+            var bonus   = 0; // acumulado de fatores positivos
+            var penalty = 0; // acumulado de fatores negativos
 
-            // 1. População crítica (>90% = +30 pontos)
-            var popRatio = state.populacao.current / (state.populacao.max || 1);
-            if (popRatio > 0.95) score += 40;
-            else if (popRatio > 0.90) score += 30;
-            else if (popRatio > 0.85) score += 20;
-            else if (popRatio > 0.80) score += 10;
+            // 1. População crítica — contribui até 40 pontos de bônus
+            var popRatio = _pop.current / (_pop.max || 1);
+            if      (popRatio > 0.95) bonus += 40;
+            else if (popRatio > 0.90) bonus += 30;
+            else if (popRatio > 0.85) bonus += 20;
+            else if (popRatio > 0.80) bonus += 10;
 
-            // 2. Armazém cheio (>90% = +25 pontos)
+            // 2. Armazém cheio — contribui até 35 pontos de bônus
+            var resMax = _res.max || 1;
             var resRatio = Math.max(
-                state.recursos.wood / state.recursos.max,
-                state.recursos.stone / state.recursos.max,
-                state.recursos.iron / state.recursos.max
+                _res.wood  / resMax,
+                _res.stone / resMax,
+                _res.iron  / resMax
             );
-            if (resRatio > 0.95) score += 35;
-            else if (resRatio > 0.90) score += 25;
-            else if (resRatio > 0.85) score += 15;
+            if      (resRatio > 0.95) bonus += 35;
+            else if (resRatio > 0.90) bonus += 25;
+            else if (resRatio > 0.85) bonus += 15;
 
-            // 3. Fila de construção vazia (pode construir = +15 pontos)
-            if (state.filaBuilds === 0 && state.premium.ativo) score += 15;
-            else if (state.filaBuilds < 2) score += 10;
+            // 3. Fila de construção — contribui até 15 pontos de bônus
+            if      (state.filaBuilds === 0 && _premium.ativo) bonus += 15;
+            else if (state.filaBuilds < 2)                     bonus += 10;
 
-            // 4. Rush disponível (+20 pontos)
-            if (state.rushIds.length > 0) score += 20;
-            if (state.knightRushId) score += 15;
+            // 4. Rush disponível — contribui até 35 pontos de bônus
+            if (_rushIds.length > 0) bonus += 20;
+            if (state.knightRushId)  bonus += 15;
 
-            // 5. Bandeira não atribuída (+10 pontos)
-            if (!state.flagAssigned) score += 10;
+            // 5. Bandeira não atribuída — contribui 10 pontos de bônus
+            if (!state.flagAssigned) bonus += 10;
 
-            // 6. Paladino disponível para recrutamento (+15 pontos)
-            if (state.knight.canRecruit && !state.knight.isRecruiting) score += 15;
+            // 6. Paladino pronto para recrutar — contribui 15 pontos de bônus
+            if (_knight.canRecruit && !_knight.isRecruiting) bonus += 15;
 
-            // Fatores que diminuem urgência:
+            // 7. Perfil econômico com recursos baixos — contribui 15 pontos de bônus
+            if (mem.profile === VillageMemory.PROFILES.ECONOMIC && resRatio < 0.5) bonus += 15;
 
-            // 7. Em cooldown (-30 pontos)
-            if (mem.cooldownUntil && Date.now() < mem.cooldownUntil) score -= 30;
+            // 8. Perfil militar com fila vazia — contribui 10 pontos de bônus
+            if (mem.profile === VillageMemory.PROFILES.MILITARY && state.filaBuilds === 0) bonus += 10;
 
-            // 8. Muitas falhas consecutivas (-20 pontos)
-            if (mem.consecutiveFails >= 3) score -= 20;
-            else if (mem.consecutiveFails >= 2) score -= 10;
+            // 9. Em cooldown — 30 pontos de penalidade
+            if (mem.cooldownUntil && Date.now() < mem.cooldownUntil) penalty += 30;
 
-            // 9. Ação em progresso (-25 pontos)
-            if (mem.actionLock) score -= 25;
+            // 10. Muitas falhas consecutivas — até 20 pontos de penalidade
+            if      (mem.consecutiveFails >= 3) penalty += 20;
+            else if (mem.consecutiveFails >= 2) penalty += 10;
 
-            // 10. Perfil econômico com recursos baixos (prioridade extra)
-            if (mem.profile === VillageMemory.PROFILES.ECONOMIC && resRatio < 0.5) {
-                score += 15;
-            }
+            // 11. Ação em progresso — 25 pontos de penalidade
+            if (mem.actionLock && Date.now() < mem.actionLock) penalty += 25;
 
-            // 11. Perfil militar com fila vazia (prioridade extra)
-            if (mem.profile === VillageMemory.PROFILES.MILITARY && state.filaBuilds === 0) {
-                score += 10;
-            }
+            // Normalização: mapeia bônus [0..175] → [0..50] e penalidade [0..75] → [0..50]
+            // Resultado sempre cabe em [0, 100] por construção; clamp é apenas segurança.
+            var MAX_BONUS   = 175; // 40+35+15+20+15+10+15+15+10
+            var MAX_PENALTY =  75; // 30+20+25
+            var score = 50
+                + Math.round((bonus   / MAX_BONUS)   * 50)
+                - Math.round((penalty / MAX_PENALTY) * 50);
 
             return Math.max(0, Math.min(100, score));
         },
@@ -2989,7 +3878,11 @@ function motorDeDecisaoMacro(state, villageId) {
             this.villages.forEach(function(v) {
                 // Tentar obter estado salvo ou calcular score básico
                 var mem = VillageMemory.get(v.id);
-                var lastState = GM_getValue('village_last_state_' + v.id, null);
+                var rawState = GM_getValue('village_last_state_' + v.id, null);
+                var lastState = null;
+                if (rawState) {
+                    try { lastState = typeof rawState === 'string' ? JSON.parse(rawState) : rawState; } catch(e) {}
+                }
                 var score = self.calculateUrgencyScore(v.id, lastState);
 
                 ranked.push({
@@ -3022,45 +3915,132 @@ function motorDeDecisaoMacro(state, villageId) {
             this.villages = this.getAllVillages();
             log('[VillageManager] ' + this.villages.length + ' aldeias encontradas', 'info');
 
-            // Inicializar perfil para aldeias novas
+            // Inicializar ou re-detectar perfil para aldeias (re-detecta a cada 2h mesmo se não BALANCED,
+            // pois a aldeia pode ter mudado de foco desde a última classificação)
             var self = this;
+            var REDETECT_INTERVAL_MS = 7200000; // 2 horas
             this.villages.forEach(function(v) {
                 var mem = VillageMemory.get(v.id);
-                if (!mem.profile || mem.profile === VillageMemory.PROFILES.BALANCED) {
-                    // Auto-detectar perfil baseado na configuração de edifícios
-                    var levels = GM_getValue('village_levels_' + v.id, {});
-                    var detectedProfile = self.autoDetectProfile(levels);
-                    if (detectedProfile !== VillageMemory.PROFILES.BALANCED) {
+                var lastDetectionTs = GM_getValue('village_profile_ts_' + v.id, 0);
+                var needsDetection  = !mem.profile
+                    || mem.profile === VillageMemory.PROFILES.BALANCED
+                    || (Date.now() - lastDetectionTs) > REDETECT_INTERVAL_MS;
+
+                if (needsDetection) {
+                    var rawSavedState = GM_getValue('village_last_state_' + v.id, null);
+                    var savedState = null;
+                    if (rawSavedState) {
+                        try { savedState = typeof rawSavedState === 'string' ? JSON.parse(rawSavedState) : rawSavedState; } catch (e) {}
+                    }
+                    var detectedProfile = self.autoDetectProfile(savedState);
+                    if (detectedProfile !== mem.profile) {
+                        log('[VillageManager] Perfil de ' + v.id + ' atualizado: ' + mem.profile + ' → ' + detectedProfile, 'info');
                         VillageMemory.setProfile(v.id, detectedProfile);
                     }
+                    GM_setValue('village_profile_ts_' + v.id, Date.now());
                 }
             });
 
             return this.villages;
         },
 
-        // Auto-detectar perfil da aldeia baseado nos níveis de edifícios
-        autoDetectProfile: function(levels) {
-            if (!levels) return VillageMemory.PROFILES.BALANCED;
+        // Auto-detectar perfil da aldeia a partir do estado salvo completo.
+        // Aceita o objeto state (com niveis, recursos, populacao, phase) — NÃO os níveis isolados.
+        autoDetectProfile: function(state) {
+            if (!state || !state.niveis) return VillageMemory.PROFILES.BALANCED;
 
-            var militaryScore = (parseInt(levels.barracks) || 0) + (parseInt(levels.stable) || 0) * 1.2 + (parseInt(levels.smith) || 0);
-            var economicScore = (parseInt(levels.wood) || 0) + (parseInt(levels.stone) || 0) + (parseInt(levels.iron) || 0) * 1.1 + (parseInt(levels.storage) || 0);
-            var defenseScore = (parseInt(levels.wall) || 0) + (parseInt(levels.hide) || 0) + (parseInt(levels.church) || 0);
+            var lvl   = state.niveis;
+            var phase = state.phase || 'EARLY';
+            var _res  = state.recursos  || { wood: 0, stone: 0, iron: 0, max: 1 };
+            var _pop  = state.populacao || { current: 0, max: 1 };
 
-            if (militaryScore > economicScore * 1.3 && militaryScore > defenseScore * 1.2) {
+            // Pontuação base pela composição de edifícios
+            var militaryScore = (parseInt(lvl.barracks) || 0)
+                + (parseInt(lvl.stable) || 0) * 1.2
+                + (parseInt(lvl.smith)  || 0);
+            var economicScore = (parseInt(lvl.wood)    || 0)
+                + (parseInt(lvl.stone)   || 0)
+                + (parseInt(lvl.iron)    || 0) * 1.1
+                + (parseInt(lvl.storage) || 0);
+            var defenseScore  = (parseInt(lvl.wall)   || 0)
+                + (parseInt(lvl.hide)    || 0)
+                + (parseInt(lvl.church)  || 0);
+
+            // Fator 1 — Nível do HQ: HQ alto acelera todas as obras → tendência BALANCED
+            var hqLevel = parseInt(lvl.main) || 0;
+            var hqBonus = HQ_PRODUCTIVITY_BONUS[Math.min(hqLevel, 25)] || 0;
+            if (hqLevel >= 10) {
+                economicScore *= (1 + hqBonus * 0.3);
+                militaryScore *= (1 + hqBonus * 0.3);
+            }
+
+            // Fator 2 — Pressão de armazém: recursos constantemente cheios → econômico
+            var resMax   = _res.max || 1;
+            var resRatio = Math.max(_res.wood / resMax, _res.stone / resMax, _res.iron / resMax);
+            if (resRatio > 0.9) economicScore *= 1.2;
+
+            // Fator 3 — Fase: amplificadores de score E thresholds de decisão específicos por fase.
+            // EARLY usa thresholds reduzidos para classificar mais cedo e evitar ficar em BALANCED
+            // desnecessariamente enquanto a aldeia já demonstra especialização clara.
+            var threshMilitary, threshEconomic, threshDefense;
+            if (phase === 'EARLY') {
+                economicScore  *= 1.4; // Forte viés econômico em EARLY (era 1.2)
+                militaryScore  *= 1.1; // Amplifica sinais militares incipientes
+                // Sinal de especialização precoce: barracks/smith já evoluídos indicam MILITARY
+                var earlyMilSignal = (parseInt(lvl.barracks) || 0) >= 3 || (parseInt(lvl.smith) || 0) >= 2;
+                if (earlyMilSignal) militaryScore *= 1.2;
+                // Thresholds reduzidos → decisão mais agressiva na fase inicial
+                threshMilitary = 1.1;  // era 1.3
+                threshEconomic = 1.2;  // era 1.5
+                threshDefense  = 1.05; // era 1.2 / 1.1
+            } else if (phase === 'MID') {
+                militaryScore  *= 1.1;
+                threshMilitary = 1.2;
+                threshEconomic = 1.35;
+                threshDefense  = 1.15;
+            } else { // LATE — mantém comportamento conservador original
+                militaryScore  *= 1.3;
+                threshMilitary = 1.3;
+                threshEconomic = 1.5;
+                threshDefense  = 1.2;
+            }
+
+            log('[autoDetectProfile] phase=' + phase + ' mil=' + militaryScore.toFixed(1) + ' eco=' + economicScore.toFixed(1) + ' def=' + defenseScore.toFixed(1) + ' threshMil=' + threshMilitary + ' threshEco=' + threshEconomic, 'debug');
+
+            // Decisão com thresholds calibrados por fase
+            if (militaryScore > economicScore * threshMilitary && militaryScore > defenseScore * threshDefense) {
                 return VillageMemory.PROFILES.MILITARY;
-            } else if (economicScore > militaryScore * 1.5 && economicScore > defenseScore * 1.3) {
+            } else if (economicScore > militaryScore * threshEconomic && economicScore > defenseScore * threshDefense) {
                 return VillageMemory.PROFILES.ECONOMIC;
-            } else if (defenseScore > militaryScore * 1.2 && defenseScore > economicScore * 1.1) {
+            } else if (defenseScore > militaryScore * threshDefense && defenseScore > economicScore * (threshDefense * 0.9)) {
                 return VillageMemory.PROFILES.SUPPORT;
             }
 
             return VillageMemory.PROFILES.BALANCED;
         },
 
-        // Salvar estado da aldeia para ranking futuro
+        // Salvar estado da aldeia para ranking futuro (apenas campos serializáveis e compactos)
         saveVillageState: function(villageId, state) {
-            GM_setValue('village_last_state_' + villageId, state);
+            if (!state) return;
+            var compact = {
+                populacao:    state.populacao,
+                recursos:     state.recursos,
+                niveis:       state.niveis,
+                filaBuilds:   state.filaBuilds,
+                rushIds:      state.rushIds,
+                knightRushId: state.knightRushId,
+                premium:      state.premium,
+                phase:        state.phase,
+                flagAssigned: state.flagAssigned,
+                canBuildStatue: state.canBuildStatue,
+                knight: state.knight ? {
+                    canRecruit:   state.knight.canRecruit,
+                    isPresent:    state.knight.isPresent,
+                    isRecruiting: state.knight.isRecruiting,
+                    statueExists: state.knight.statueExists
+                } : null
+            };
+            GM_setValue('village_last_state_' + villageId, JSON.stringify(compact));
         },
 
         // Mostrar status do gerenciamento multi-village
@@ -3084,10 +4064,13 @@ function motorDeDecisaoMacro(state, villageId) {
         }
         log('TW Smart Automation v8.0 - Multi-Village Manager iniciado.');
 
+        // Limpeza periódica do cache — independente do ciclo de coleta de estado
+        setInterval(function() { RequestCache.cleanup(); }, CONFIG.cacheExpiryMs * 4);
+
         // Refresh inicial das aldeias
         VillageManager.refreshVillages();
 
-        var villageId = getCurrentVillageId();
+        var villageId = normalizeVillageId(getCurrentVillageId());
         var screen = getScreenParam();
 
         // Background checklist roda em QUALQUER tela
@@ -3141,6 +4124,60 @@ function motorDeDecisaoMacro(state, villageId) {
         // API para forçar refresh das aldeias
         refreshVillages: function() {
             return VillageManager.refreshVillages();
+        },
+        // Define custo de um edifício para este mundo e persiste para a próxima sessão.
+        // Uso: TWBot.setCostOverride('barracks', [90, 130, 0, 130])
+        setCostOverride: function(building, costsArray) {
+            if (!building || !Array.isArray(costsArray) || costsArray.length < 3) {
+                console.error('[TWBot] setCostOverride: espera (string, [w, s, i, t])');
+                return;
+            }
+            TW_BUILDING_COSTS[building] = costsArray;
+            try {
+                var raw = GM_getValue('twbot_costs_override', null);
+                var stored = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {};
+                stored[building] = costsArray;
+                GM_setValue('twbot_costs_override', JSON.stringify(stored));
+                // Override manual = confiança máxima para este edifício
+                var _wId    = (typeof game_data !== 'undefined' && game_data.world)
+                    ? game_data.world : window.location.hostname.replace(/[^a-z0-9]/gi, '_');
+                var ctxKey  = getCostContextKey(_wId);
+                var confKey = 'twbot_cost_confidence_' + ctxKey;
+                var conf = {}; try { conf = JSON.parse(GM_getValue(confKey, null) || '{}'); } catch(e) {}
+                conf[building] = { score: 100, hits: 1, source: 'override', ts: Date.now() };
+                GM_setValue(confKey, JSON.stringify(conf));
+                console.log('[TWBot] Override salvo para ' + building + ': ' + JSON.stringify(costsArray) + ' (confiança: 100)');
+            } catch (e) { console.error('[TWBot] Erro ao salvar override: ' + e.message); }
+        },
+        // Retorna os overrides manuais ativos em relação aos defaults.
+        getCostOverrides: function() {
+            try {
+                var raw = GM_getValue('twbot_costs_override', null);
+                return raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {};
+            } catch (e) { return {}; }
+        },
+        // Retorna confidence score por edifício para o contexto atual (mundo+mercado+idioma).
+        // Scores: 0-39 = fallback estático; 40-69 = parcialmente calibrado; 70-100 = calibrado por DOM.
+        getCostConfidence: function() {
+            try {
+                var _wId   = (typeof game_data !== 'undefined' && game_data.world)
+                    ? game_data.world : window.location.hostname.replace(/[^a-z0-9]/gi, '_');
+                var ctxKey = getCostContextKey(_wId);
+                var raw    = GM_getValue('twbot_cost_confidence_' + ctxKey, null);
+                return raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {};
+            } catch(e) { return {}; }
+        },
+        // Força re-scraping de custos na próxima visita a screen=main.
+        // Útil após mudança de mundo, idioma ou atualização do jogo.
+        clearCostCache: function() {
+            try {
+                var _wId   = (typeof game_data !== 'undefined' && game_data.world)
+                    ? game_data.world : window.location.hostname.replace(/[^a-z0-9]/gi, '_');
+                var ctxKey = getCostContextKey(_wId);
+                GM_setValue('twbot_costs_scraped_' + ctxKey, 0);
+                GM_setValue('twbot_force_rescrape', 1);
+                console.log('[TWBot] Cache de custos limpo para contexto "' + ctxKey + '". Re-scraping na próxima visita.');
+            } catch(e) { console.error('[TWBot] Erro em clearCostCache: ' + e.message); }
         }
     };
 
