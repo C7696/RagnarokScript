@@ -2265,101 +2265,11 @@ function motorDeDecisaoMacro(state, villageId) {
             }
 
             // ==========================================
-            // GARGALO DE POPULAÇÃO — 4 NÍVEIS RÍGIDOS
+            // SCORE UNIFICADO — TODAS AS DECISÕES
             // ==========================================
-            // P0  Emergência  (95%+):   interrupção total — precede tudo, inclusive nobling
-            // P1C Prio. Alta  (92-95%): prioridade explícita — antes de anti-overflow e milestones
-            // P3  Preparação  (88-92%): meta latente — farm compete dentro do bloco de milestone
-            // P4  Observação  (82-88%): bônus de score apenas (urgênciaGargalo = 1.1)
-            var _noblingEssentials = ['farm', 'storage', 'market'];
-            // PRIORIDADE 0: Emergência (95%+) — interrupção total
-            // Precede nobling prep: pop crítica invalida qualquer outra estratégia
-            if (nivelAlertaFarm === 'emergencia' && state.podeSerConstruido['farm'] && isBuildExecutable('farm', state, state._mainDoc)) {
-                selectedTarget = 'farm';
-                selectedTier = 'P0'; selectedScoreMargin = 999;
-                visHUD.gargalo = "POPULAÇÃO (EMERGÊNCIA 95%+)";
-                visHUD.motivo = "Pop em " + Math.round(taxaPop) + "% — interrupção total";
-            }
-            // PRIORIDADE 1: Nobling prep (farm emergência já tratado acima)
-            else if (noblingPrepBlocking && _noblingEssentials.indexOf(selectedTarget) === -1) {
-                // Nobling Prep: permite farm/storage/market, bloqueia todo o resto
-                var _ess = _noblingEssentials.filter(function(b) { return state.podeSerConstruido[b]; });
-                if (_ess.length > 0) {
-                    selectedTarget = _ess[0];
-                    selectedTier = 'P_NOBLING'; selectedScoreMargin = 999;
-                    visHUD.gargalo = "NOBLING PREP (essencial)";
-                    visHUD.motivo  = "Acumulando nobres — permitindo " + selectedTarget;
-                } else {
-                    selectedTarget = null;
-                }
-            } else if (noblingPrepBlocking) {
-                // selectedTarget já é essencial — deixa passar
-            }
-            // PRIORIDADE 1B: Risco iminente de armazém cheio (<1.5h para encher)
-            else if (riscoArmazem && tempoAteGargalo < 1.5) {
-                // Escolher edifício de recurso mais carente
-                // Decisor individual: recurso com menor tempo até overflow — não o de maior % atual
-                var recursoMaisCarente = ['wood', 'stone', 'iron'].reduce(function(a, b) {
-                    return tempoAteOverflow[a] <= tempoAteOverflow[b] ? a : b;
-                });
-                if (state.podeSerConstruido[recursoMaisCarente]) {
-                    selectedTarget = recursoMaisCarente;
-                    selectedTier = 'P1B'; selectedScoreMargin = 999;
-                    visHUD.gargalo = "ARMAZÉM CHEIO (CRÍTICO)";
-                    visHUD.motivo = Math.round(recursosPercent[recursoMaisCarente]*100) + "% — overflow em " + Math.round(tempoAteOverflow[recursoMaisCarente]*60) + "min";
-                }
-            }
-            // PRIORIDADE 1C: Farm prioridade explícita (92-95%) — antes de overflow e milestones
-            else if (nivelAlertaFarm === 'prioridade_alta' && state.podeSerConstruido['farm'] && isBuildExecutable('farm', state, state._mainDoc)) {
-                selectedTarget = 'farm';
-                selectedTier = 'P1C'; selectedScoreMargin = 999;
-                visHUD.gargalo = "POPULAÇÃO (PRIORIDADE EXPLÍCITA 92-95%)";
-                visHUD.motivo = "Pop em " + Math.round(taxaPop) + "% — farm obrigatório";
-            }
-            // PRIORIDADE 2: CONSTRUÇÃO RÁPIDA ANTI-OVERFLOW
-            // Quando recursos ≥80% da capacidade, priorizar edifícios com tempo de construção
-            // <120s (2 min) no nível atual para consumir recursos e evitar desperdício por overflow.
-            else if (recursosPercent.wood > 0.80 || recursosPercent.stone > 0.80 || recursosPercent.iron > 0.80) {
-                var recursoMaisCheio = Object.keys(recursosPercent).reduce(function(a, b) {
-                    return recursosPercent[a] > recursosPercent[b] ? a : b;
-                });
-
-                var _swPhase = state.phase || 'MID';
-                var candidatosRapidos = Object.keys(TW_BUILDING_COSTS).filter(function(ed) {
-                    if (!state.podeSerConstruido[ed]) return false;
-                    if (!isBuildExecutable(ed, state, state._mainDoc)) return false;
-                    var custo = TW_BUILDING_COSTS[ed];
-                    if (!custo) return false;
-                    var phaseWeights = STRATEGIC_WEIGHT[_swPhase] || STRATEGIC_WEIGHT['MID'];
-                    var w = phaseWeights[ed];
-                    if (w === undefined || w <= 0.5) return false; // exclude low-priority buildings
-                    var nivelAtual = parseInt(state.niveis[ed] || 0);
-                    var tempoReal = Math.floor(custo[3] * Math.pow(1.1, nivelAtual));
-                    return tempoReal < 120;
-                });
-
-                if (candidatosRapidos.length > 0) {
-                    // Entre os rápidos, priorizar o que consome mais recursos totais no nível atual
-                    candidatosRapidos.sort(function(a, b) {
-                        var custoA = TW_BUILDING_COSTS[a] || [0, 0, 0, 0];
-                        var custoB = TW_BUILDING_COSTS[b] || [0, 0, 0, 0];
-                        var nivelA = parseInt(state.niveis[a] || 0);
-                        var nivelB = parseInt(state.niveis[b] || 0);
-                        var consumoA = (custoA[0] + custoA[1] + custoA[2]) * Math.pow(1.5, nivelA);
-                        var consumoB = (custoB[0] + custoB[1] + custoB[2]) * Math.pow(1.5, nivelB);
-                        return consumoB - consumoA;
-                    });
-                    selectedTarget = candidatosRapidos[0];
-                    selectedTier = 'P2'; selectedScoreMargin = 999;
-                    visHUD.gargalo = "ANTI-OVERFLOW (RÁPIDO)";
-                    visHUD.motivo = "Recursos " + recursoMaisCheio + " em " + Math.round(recursosPercent[recursoMaisCheio] * 100) + "% — construção rápida priorizada";
-                    log('[motorDeDecisao] Anti-overflow: priorizando ' + selectedTarget + ' (<2min) com ' + recursoMaisCheio + ' em ' + Math.round(recursosPercent[recursoMaisCheio]*100) + '%', 'info');
-                }
-            }
-            // SCORE UNIFICADO — todos os edifícios competem simultaneamente
-            // Milestones viram bônus de score (×1.8), não filtros obrigatórios.
-            // urgênciaProdução detecta gargalos de mina sem regras manuais.
-            else {
+            // Eliminado: verificações prévias rígidas (P0, P1B, P1C, P2)
+            // Tudo agora compete no mesmo score com multiplicadores de urgência
+            {
                 var todosCandidatos = Object.keys(TW_BUILDING_REQS).filter(function(ed) {
                     if (!state.podeSerConstruido[ed]) return false;
                     if (ed === 'snob') return false;
@@ -2396,19 +2306,32 @@ function motorDeDecisaoMacro(state, villageId) {
                             if (_prodAtual < 200) urgênciaProdução = Math.max(urgênciaProdução, 1.5); // produção absoluta crítica
                         }
 
-                        // 4. Urgência de gargalo atual (farm + overflow)
+                        // 4. Urgência de gargalo atual (farm + overflow + nobling)
                         var urgenciaGargalo = 1.0;
                         if (ed === 'farm') {
-                            if (nivelAlertaFarm === 'emergencia')          urgenciaGargalo = 2.0;
-                            else if (nivelAlertaFarm === 'prioridade_alta') urgenciaGargalo = 1.5;
-                            else if (nivelAlertaFarm === 'preparacao')      urgenciaGargalo = 1.3;
-                            else if (nivelAlertaFarm === 'observacao')      urgenciaGargalo = 1.1;
+                            if (nivelAlertaFarm === 'emergencia')          urgenciaGargalo = 3.0;
+                            else if (nivelAlertaFarm === 'prioridade_alta') urgenciaGargalo = 2.0;
+                            else if (nivelAlertaFarm === 'preparacao')      urgenciaGargalo = 1.5;
+                            else if (nivelAlertaFarm === 'observacao')      urgenciaGargalo = 1.2;
                         }
+                        // Overflow: edifícios rápidos consomem recursos antes do desperdício
                         if (riscoArmazem && ['wood', 'stone', 'iron'].includes(ed)) {
-                            var _uArm = tempoAteGargalo < 0.5 ? 2.5
-                                      : tempoAteGargalo < 1.0 ? 2.0
-                                      : tempoAteGargalo < 1.5 ? 1.5 : 1.2;
+                            var _uArm = tempoAteGargalo < 0.5 ? 3.0
+                                      : tempoAteGargalo < 1.0 ? 2.5
+                                      : tempoAteGargalo < 1.5 ? 2.0 : 1.5;
                             urgenciaGargalo = Math.max(urgenciaGargalo, _uArm);
+                        }
+                        // Nobling Prep: farm/storage/market essenciais ganham boost massivo
+                        if (noblingPrepBlocking && ['farm', 'storage', 'market'].includes(ed)) {
+                            urgenciaGargalo = Math.max(urgenciaGargalo, 2.5);
+                        }
+                        // Anti-overflow: construção rápida (<2min) quando recursos >80%
+                        if ((recursosPercent.wood > 0.80 || recursosPercent.stone > 0.80 || recursosPercent.iron > 0.80)) {
+                            var custo = TW_BUILDING_COSTS[ed] || [0, 0, 0, 0];
+                            var tempoReal = Math.floor(custo[3] * Math.pow(1.1, nivelAtual));
+                            if (tempoReal < 120) {
+                                urgenciaGargalo = Math.max(urgenciaGargalo, 2.2);
+                            }
                         }
 
                         // 5. Bônus de milestone: edifício no caminho do objetivo atual ganha ×1.8
@@ -2470,10 +2393,25 @@ function motorDeDecisaoMacro(state, villageId) {
                     unified.sort(function(a, b) { return b.score - a.score; });
                     selectedTarget = unified[0].ed;
 
-                    // Tier: P3 se vencedor alinhado com milestone, P4 se venceu por score puro
+                    // Tier dinâmico baseado na urgência dominante que venceu o score
                     var _onMilestone = !!(activeMilestone && activeMilestone.reqs[selectedTarget] &&
                                          (activeMilestone.reqs[selectedTarget] - parseInt(state.niveis[selectedTarget] || 0)) > 0);
-                    selectedTier = _onMilestone ? 'P3' : 'P4';
+                    var _winner = unified[0];
+                    
+                    // Determinar tier pela urgência dominante
+                    var _urgenciaDominante = 'P4'; // Score puro
+                    if (nivelAlertaFarm === 'emergencia' && selectedTarget === 'farm') _urgenciaDominante = 'P0';
+                    else if (noblingPrepBlocking && ['farm', 'storage', 'market'].includes(selectedTarget)) _urgenciaDominante = 'P_NOBLING';
+                    else if (riscoArmazem && tempoAteGargalo < 1.5 && ['wood', 'stone', 'iron'].includes(selectedTarget)) _urgenciaDominante = 'P1B';
+                    else if (nivelAlertaFarm === 'prioridade_alta' && selectedTarget === 'farm') _urgenciaDominante = 'P1C';
+                    else if ((recursosPercent.wood > 0.80 || recursosPercent.stone > 0.80 || recursosPercent.iron > 0.80)) {
+                        var custoWinner = TW_BUILDING_COSTS[selectedTarget] || [0, 0, 0, 0];
+                        var tempoWinner = Math.floor(custoWinner[3] * Math.pow(1.1, parseInt(state.niveis[selectedTarget] || 0)));
+                        if (tempoWinner < 120) _urgenciaDominante = 'P2';
+                    }
+                    else if (_onMilestone) _urgenciaDominante = 'P3';
+                    
+                    selectedTier = _urgenciaDominante;
                     selectedScoreMargin = unified.length > 1 ? unified[0].score - unified[1].score : unified[0].score;
                     selectedAlternative = unified.length > 1 ? unified[1] : null;
 
