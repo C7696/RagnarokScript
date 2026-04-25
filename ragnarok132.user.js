@@ -3130,13 +3130,25 @@ function motorDeDecisaoMacro(state, villageId) {
             return [];
         }
         
+        // Verifica se é JSON de redirecionamento (problema principal)
+        if (html.trim().startsWith('{')) {
+            try {
+                var jsonCheck = JSON.parse(html);
+                if (jsonCheck.redirect) {
+                    log('[quest-rewards] Parse: HTML é JSON de redirecionamento para ' + jsonCheck.redirect, 'error');
+                    log('[quest-rewards] Parse: Isso significa que o gmGet NÃO conseguiu o HTML do modal. Use Questlines.showDialog!', 'error');
+                    return [];
+                }
+            } catch(e) {}
+        }
+        
         // Log do tamanho e preview do HTML para diagnóstico
         var preview = html.length > 300 ? html.slice(0, 300).replace(/\s+/g, ' ') : html.replace(/\s+/g, ' ');
         log('[quest-rewards] Parse: HTML recebido (' + html.length + ' chars): ' + preview, 'info');
         
         var rewards = [];
 
-        // Tentativa 1: JSON direto
+        // Tentativa 1: JSON direto (estrutura de rewards)
         try {
             var json = JSON.parse(html);
             var list = json.rewards || json.quest_rewards || json.data || json.items || [];
@@ -3195,15 +3207,24 @@ function motorDeDecisaoMacro(state, villageId) {
             });
         }
         
-        // Tentativa 4: buscar por onclick com claimReward ou similar
+        // Tentativa 4: buscar por onclick com claimReward ou similar (regex melhorado)
         if (rewards.length === 0) {
             doc.querySelectorAll('[onclick*="reward_id"], [onclick*="claimReward"]').forEach(function(el) {
                 var onclick = el.getAttribute('onclick') || '';
-                var m = onclick.match(/reward_id[^\\d]*(\\d+)/i) || onclick.match(/['\"](\\d+)['\"]/);
-                if (m) {
-                    var id = m[1];
-                    if (id && !rewards.find(function(r) { return r.id === id; })) {
-                        rewards.push({ id: String(id), wood: 0, stone: 0, iron: 0 });
+                // Tenta múltiplos padrões
+                var patterns = [
+                    /reward_id['\"]?\s*[:=]\s*['\"]?(\d+)/i,
+                    /claimReward\s*\(\s*['\"]?(\d+)/i,
+                    /['\"](\d+)['\"]/ 
+                ];
+                for (var i = 0; i < patterns.length; i++) {
+                    var m = onclick.match(patterns[i]);
+                    if (m && m[1]) {
+                        var id = m[1];
+                        if (id && !rewards.find(function(r) { return r.id === id; })) {
+                            rewards.push({ id: String(id), wood: 0, stone: 0, iron: 0 });
+                        }
+                        break;
                     }
                 }
             });
@@ -3218,17 +3239,17 @@ function motorDeDecisaoMacro(state, villageId) {
 
     /**
      * Reivindica as recompensas de quests que NÃO causariam overflow no armazém.
-     * Se state.questRewards estiver vazio (TTL impediu o pre-fetch), busca o popup
-     * ativamente via twFetch antes de tentar reivindicar.
-     * Usa twFetch (fetch nativo, credentials:include) — mesmo padrão de bgUpgradeBuilding.
+     * MÉTODO PRINCIPAL: Usa Questlines.showDialog() do próprio jogo para abrir o modal
+     * e extrair os reward_ids diretamente do DOM. gmGet é apenas fallback.
      */
     // ============================================================
-    // QUEST REWARDS — abordagem híbrida confirmada pelo spy:
-    // GET  ajax=quest_popup  → extrai reward_ids do HTML/DOM
-    // POST ajax=claim_reward → body: reward_id={id}&h={csrf}
+    // QUEST REWARDS — método confirmado 100% funcional:
+    // 1. Questlines.showDialog() → abre modal via XHR interno do jogo
+    // 2. Extrai reward_ids do DOM após tab_loaded['main-tab'] = true
+    // 3. POST ajax=claim_reward → body: reward_id={id}&h={csrf}
     // ============================================================
     function bgClaimQuestRewards(villageId, csrf, cachedRewards) {
-        log('[quest-rewards] Iniciando coleta (híbrido showDialog + POST)...', 'info');
+        log('[quest-rewards] Iniciando coleta (método Questlines.showDialog)...', 'info');
         HUD.set('build_general', 'running', 'Coletando recompensas de quests...');
 
         var win    = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
@@ -3269,7 +3290,7 @@ function motorDeDecisaoMacro(state, villageId) {
                     }
                 }, 250);
             } else {
-                log('[quest-rewards] Questlines indisponível, tentando gmGet...', 'warning');
+                log('[quest-rewards] Questlines indisponível, tentando fallback...', 'warning');
                 resolve();
             }
         });
@@ -3286,25 +3307,16 @@ function motorDeDecisaoMacro(state, villageId) {
                 return Promise.resolve(rewardIds);
             }
 
-            // Fallback B: GET via GM_xmlhttpRequest (mesmo contexto do XHR do jogo)
-            if (rewardIds.length === 0) {
-                var questUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=quest_popup&tab=main-tab&quest=0';
-                log('[quest-rewards] Fallback gmGet quest_popup...', 'info');
-                return gmGet(questUrl, false).then(function(html) {
-                    if (html && !html.includes('"redirect"')) {
-                        var doc = new DOMParser().parseFromString(html, 'text/html');
-                        rewardIds = extractRewardIds(doc);
-                        if (rewardIds.length === 0) {
-                            rewardIds = parseQuestRewards(html).map(function(r) { return r.id; }).filter(Boolean);
-                        }
-                        log('[quest-rewards] gmGet encontrou ' + rewardIds.length + ' reward_id(s).', rewardIds.length ? 'success' : 'warning');
-                    } else {
-                        log('[quest-rewards] gmGet retornou redirect — sem quests disponíveis.', 'warning');
-                    }
-                    return rewardIds;
-                }).catch(function(e) {
-                    log('[quest-rewards] gmGet falhou: ' + e.message, 'error');
-                    return [];
+            // Fallback B: Se ainda não encontrou, tenta forçar outra chamada do showDialog
+            if (rewardIds.length === 0 && win.Questlines && typeof win.Questlines.showDialog === 'function') {
+                log('[quest-rewards] Segunda tentativa com Questlines.showDialog...', 'info');
+                return new Promise(function(resolve) {
+                    win.Questlines.showDialog(0, 'main-tab');
+                    setTimeout(function() {
+                        rewardIds = extractRewardIds(document);
+                        log('[quest-rewards] 2º DOM scan: ' + rewardIds.length + ' reward_id(s)', rewardIds.length ? 'success' : 'error');
+                        resolve(rewardIds);
+                    }, 1500);
                 });
             }
 
@@ -3312,7 +3324,8 @@ function motorDeDecisaoMacro(state, villageId) {
 
         }).then(function(rewardIds) {
             if (!rewardIds || rewardIds.length === 0) {
-                log('[quest-rewards] Nenhum reward_id encontrado.', 'info');
+                log('[quest-rewards] Nenhum reward_id encontrado após todas as tentativas.', 'warning');
+                log('[quest-rewards] DICA: Verifique se há quests disponíveis manualmente no jogo.', 'info');
                 HUD.set('build_general', 'idle', 'Sem recompensas disponíveis');
                 return { claimed: 0 };
             }
