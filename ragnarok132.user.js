@@ -3550,65 +3550,120 @@ function motorDeDecisaoMacro(state, villageId) {
         });
     }
 
-    /**
-     * Nova função principal baseada no interceptador:
-     * 1. fetchQuestDialog() - GET AJAX para obter dialog JSON
-     * 2. parseQuestRewards() - extrai reward_ids do HTML
-     * 3. claimReward() - POST para coletar cada recompensa
-     * Método mais limpo e direto, sem necessidade de página completa
-     */
-    function autoCollectQuestRewards(villageId, csrf) {
-        log('[quest-rewards] === AUTO COLLECT (INTERCEPTADOR) === village=' + villageId, 'info');
-        HUD.set('build_general', 'running', 'Coletando quests...');
+    // ============================================================
+    // QUEST REWARDS - COLETA EM SEGUNDO PLANO VIA AJAX NATIVO
+    // ============================================================
+    async function autoCollectQuestRewards() {
+        var villageId = getCurrentVillageId();
+        if (!villageId) return;
 
-        return fetchQuestDialog(villageId).then(function(dialogHTML) {
-            if (!dialogHTML) {
-                log('[quest-rewards] Nenhum dialog de quest encontrado.', 'warning');
-                HUD.set('build_general', 'idle', 'Sem quests');
-                return { claimed: 0 };
+        log('[quest-rewards] Iniciando verificação em segundo plano...', 'info');
+
+        // URL exata capturada pelo espião: GET para abrir o modal
+        var popupUrl = '/game.php?village=' + villageId + '&screen=new_quests&ajax=quest_popup&tab=main-tab&quest=0';
+
+        try {
+            // 1. Busca o HTML do modal usando twFetch (fetch nativo, não gmGet!)
+            // twFetch já envia os headers AJAX corretos e mantém os cookies de sessão
+            var responseText = await twFetch(popupUrl, 'GET', null, false);
+
+            // 2. Converte a resposta para JSON
+            var data;
+            try {
+                data = JSON.parse(responseText);
+            } catch (e) {
+                log('[quest-rewards] Resposta não é um JSON válido. Parando.', 'error');
+                return;
             }
 
-            // Parse do HTML para extrair reward_ids
-            var rewards = parseQuestRewards(dialogHTML);
-            
-            if (rewards.length === 0) {
-                log('[quest-rewards] Nenhuma recompensa disponível para coletar.', 'info');
-                HUD.set('build_general', 'idle', 'Sem rewards');
-                return { claimed: 0 };
+            // Verifica se o servidor mandou um redirect (o bug antigo)
+            if (data.redirect) {
+                log('[quest-rewards] Servidor retornou redirect. A requisição AJAX não foi reconhecida.', 'error');
+                return;
             }
 
-            var rewardIds = rewards.map(function(r) { return r.id; });
-            log('[quest-rewards] Encontradas ' + rewardIds.length + ' recompensa(s): [' + rewardIds.join(', ') + ']', 'success');
+            // 3. Extrai o HTML de dentro do JSON (confirmado pelo espião: data.response.dialog)
+            if (!data.response || !data.response.dialog) {
+                log('[quest-rewards] Nenhuma recompensa de quest disponível no momento.', 'info');
+                return;
+            }
 
-            // Coleta cada recompensa com delay de segurança
-            var claimed = 0;
-            return rewardIds.reduce(function(chain, rId) {
-                return chain.then(function() {
-                    return claimReward(villageId, csrf, rId).then(function(result) {
-                        if (result && !result.error) {
-                            log('[quest-rewards] Recompensa ' + rId + ' coletada com sucesso!', 'success');
-                            claimed++;
-                            // Atualiza interface se Questlines estiver disponível
-                            if (typeof Questlines !== 'undefined' && Questlines.update) {
-                                Questlines.update();
-                            }
-                        } else {
-                            log('[quest-rewards] Falha ao coletar ' + rId + ': ' + (result ? JSON.stringify(result) : 'erro desconhecido'), 'warning');
-                        }
-                        // Delay de 1-2s entre coletas para evitar flood
-                        return sleep(1000 + Math.random() * 1000);
-                    });
-                });
-            }, Promise.resolve()).then(function() {
-                log('[quest-rewards] Rotina finalizada: ' + claimed + '/' + rewardIds.length + ' coletados', 'info');
-                HUD.set('build_general', 'idle', 'Quests: ' + claimed);
-                return { claimed: claimed };
+            var dialogHTML = data.response.dialog;
+
+            // 4. Faz o parse do HTML para encontrar o reward_id
+            var parser = new DOMParser();
+            var doc = parser.parseFromString(dialogHTML, 'text/html');
+
+            var rewardIds = [];
+
+            // Método A: Procura botão/elemento com data-reward-id
+            doc.querySelectorAll('[data-reward-id]').forEach(function(el) {
+                var id = el.getAttribute('data-reward-id');
+                if (id && rewardIds.indexOf(id) === -1) rewardIds.push(id);
             });
-        }).catch(function(err) {
-            log('[quest-rewards] Erro crítico: ' + err.message, 'error');
-            HUD.set('build_general', 'idle', 'Erro na coleta');
-            return { claimed: 0, error: err.message };
-        });
+
+            // Método B: Procura input hidden com name="reward_id"
+            if (rewardIds.length === 0) {
+                doc.querySelectorAll('input[name="reward_id"]').forEach(function(el) {
+                    if (el.value && rewardIds.indexOf(el.value) === -1) rewardIds.push(el.value);
+                });
+            }
+
+            // Método C: Regex fallback (procura reward_id=12345 no HTML bruto)
+            if (rewardIds.length === 0) {
+                var regex = /reward_id=(\d+)/g;
+                var match;
+                while ((match = regex.exec(dialogHTML)) !== null) {
+                    if (rewardIds.indexOf(match[1]) === -1) rewardIds.push(match[1]);
+                }
+            }
+
+            // 5. Se não achou recompensa, para por aqui
+            if (rewardIds.length === 0) {
+                log('[quest-rewards] Modal abriu, mas não há botão de coleta disponível.', 'info');
+                return;
+            }
+
+            log('[quest-rewards] Encontradas ' + rewardIds.length + ' recompensa(s) para coletar.', 'success');
+
+            // 6. Coleta cada recompensa
+            var csrfToken = game_data.csrf;
+            var claimUrl = '/game.php?village=' + villageId + '&screen=new_quests&ajax=claim_reward';
+
+            for (var i = 0; i < rewardIds.length; i++) {
+                var rId = rewardIds[i];
+                log('[quest-rewards] Coletando reward_id: ' + rId + '...', 'info');
+
+                // Body exato capturado pelo espião: POST com reward_id e token h
+                var body = 'reward_id=' + rId + '&h=' + csrfToken;
+
+                try {
+                    var claimResponseText = await twFetch(claimUrl, 'POST', body, false);
+                    var claimData = JSON.parse(claimResponseText);
+
+                    if (claimData.response) {
+                        log('[quest-rewards] Recompensa ' + rId + ' coletada com sucesso!', 'success');
+                        
+                        // Tenta atualizar a interface do jogo sem recarregar a página
+                        if (typeof Questlines !== 'undefined' && typeof Questlines.update === 'function') {
+                            try { Questlines.update(); } catch(e) {}
+                        }
+                    } else {
+                        log('[quest-rewards] Falha ou resposta inesperada ao coletar ' + rId + ': ' + JSON.stringify(claimData), 'warning');
+                    }
+                } catch (claimError) {
+                    log('[quest-rewards] Erro de rede ao coletar reward ' + rId + ': ' + claimError.message, 'error');
+                }
+
+                // Delay de segurança entre cada coleta para não triggerar anti-bot
+                await new Promise(resolve => setTimeout(resolve, 1000 + Math.floor(Math.random() * 1000)));
+            }
+
+            log('[quest-rewards] Rotina de coleta finalizada.', 'info');
+
+        } catch (error) {
+            log('[quest-rewards] Erro geral no processo: ' + error.message, 'error');
+        }
     }
 
     // ============================================================
@@ -3805,15 +3860,11 @@ function motorDeDecisaoMacro(state, villageId) {
                             });
                     }
                     else if (task.id === 'claim_quest_rewards') {
-                        var _questCsrf = state.csrf || '';
-                        try {
-                            var _qw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-                            _questCsrf = (_qw.game_data && _qw.game_data.csrf) || _questCsrf;
-                        } catch(e) {}
                         // Usa a nova função baseada no interceptador (mais limpa e direta)
-                        p = autoCollectQuestRewards(villageId, _questCsrf)
+                        // autoCollectQuestRewards agora é async e não precisa de parâmetros
+                        p = autoCollectQuestRewards()
                             .then(function(result) {
-                                if (result.claimed > 0) {
+                                if (result !== undefined && result !== null) {
                                     VillageMemory.recordSuccess(villageId, 'quest_rewards');
                                     log('[motorDeDecisao] Recursos de quest injetados! Reavaliando no próximo ciclo...', 'success');
                                 } else {
