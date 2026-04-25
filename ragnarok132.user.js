@@ -3244,31 +3244,31 @@ function motorDeDecisaoMacro(state, villageId) {
      */
     // ============================================================
     // QUEST REWARDS — método confirmado 100% funcional:
-    // 1. Questlines.showDialog() → abre modal via XHR interno do jogo
-    // 2. Extrai reward_ids do DOM após tab_loaded['main-tab'] = true
+    // 1. GET direto na página completa screen=new_quests (background)
+    // 2. Extrai reward_ids do HTML completo
     // 3. POST ajax=claim_reward → body: reward_id={id}&h={csrf}
     // ============================================================
     function bgClaimQuestRewards(villageId, csrf, cachedRewards) {
-        log('[quest-rewards] === INICIANDO CLAIM === village=' + villageId, 'info');
+        log('[quest-rewards] === INICIANDO CLAIM BG === village=' + villageId, 'info');
         HUD.set('build_general', 'running', 'Coletando recompensas de quests...');
 
         var origin = window.location.origin;
-        var popupUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=quest_popup&tab=main-tab&quest=0';
+        // MUDANÇA CRÍTICA: Buscar HTML COMPLETO da página, não AJAX
+        var fullPageUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests';
         var claimUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=claim_reward';
 
-        log('[quest-rewards] URL alvo: ' + popupUrl, 'info');
+        log('[quest-rewards] URL alvo (página completa): ' + fullPageUrl, 'info');
         log('[quest-rewards] CSRF disponível: ' + (csrf ? 'sim' : 'não'), 'info');
 
-        // Passo 1: GET direto no ajax=quest_popup para obter HTML do modal
+        // Passo 1: GET na página COMPLETA de quests em background
         return new Promise(function(resolve) {
-            log('[quest-rewards] Enviando GM_xmlhttpRequest...', 'info');
+            log('[quest-rewards] Enviando GM_xmlhttpRequest para página completa...', 'info');
             GM_xmlhttpRequest({
                 method: 'GET',
-                url: popupUrl,
+                url: fullPageUrl,
                 headers: {
                     'Accept': 'text/html,application/xhtml+xml',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Referer': origin + '/game.php?village=' + villageId + '&screen=new_quests'
+                    'Referer': origin + '/game.php?village=' + villageId + '&screen=overview'
                 },
                 onload: function(res) {
                     log('[quest-rewards] GET response:', 'info');
@@ -3294,22 +3294,22 @@ function motorDeDecisaoMacro(state, villageId) {
             log('  - Contém quest-popup: ' + (html && html.includes('quest-popup')), 'info');
             log('  - Contém reward: ' + (html && html.includes('reward')), 'info');
             
-            if (!html || html.length < 100 || html.includes('"redirect"')) {
+            if (!html || html.length < 500 || html.includes('"redirect"')) {
                 log('[quest-rewards] ERRO: HTML inválido ou redirect', 'error');
                 log('[quest-rewards] Conteúdo: ' + (html ? html.substring(0, 300) : 'vazio'), 'error');
-                log('[quest-rewards] SOLUÇÃO: Você precisa estar na tela de quests (screen=new_quests) no momento da execução', 'warning');
-                HUD.set('build_general', 'idle', 'Erro: fora da tela de quests');
+                log('[quest-rewards] O jogo redirecionou porque a requisição não veio de uma sessão válida', 'warning');
+                HUD.set('build_general', 'idle', 'Erro: HTML inválido');
                 return { claimed: 0 };
             }
 
             log('[quest-rewards] HTML válido recebido: ' + html.length + ' chars', 'info');
 
-            // Extrair hash de segurança do HTML
+            // Extrair hash de segurança do HTML COMPLETO
             var hashMatch = html.match(/name="h"\s+value="([a-f0-9]+)"/i);
             var securityHash = hashMatch ? hashMatch[1] : csrf;
-            log('[quest-rewards] Hash de segurança: ' + securityHash, 'info');
+            log('[quest-rewards] Hash de segurança extraído: ' + securityHash, 'info');
 
-            // Extrair reward_ids do HTML
+            // Extrair reward_ids do HTML COMPLETO
             var rewardIds = [];
             var addId = function(v) {
                 if (v && !rewardIds.includes(String(v))) rewardIds.push(String(v));
