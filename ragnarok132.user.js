@@ -3253,18 +3253,18 @@ function motorDeDecisaoMacro(state, villageId) {
         HUD.set('build_general', 'running', 'Coletando recompensas de quests...');
 
         var origin = window.location.origin;
-        // MUDANÇA CRÍTICA: Buscar HTML COMPLETO da página, não AJAX
+        // Buscar HTML COMPLETO da página de quests
         var fullPageUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests';
+        var rewardTabUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=quest_popup&tab=reward-tab';
         var claimUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=claim_reward';
 
         log('[quest-rewards] URL alvo (página completa): ' + fullPageUrl, 'info');
         log('[quest-rewards] CSRF disponível: ' + (csrf ? 'sim' : 'não'), 'info');
 
-        // Passo 1: GET na página COMPLETA de quests em background
+        // Passo 1: GET na página COMPLETA de quests para obter hash
         return new Promise(function(resolve) {
             log('[quest-rewards] Enviando GM_xmlhttpRequest para página completa...', 'info');
             
-            // CRÍTICO: Obter cookies da sessão atual para autenticar a requisição
             var cookies = document.cookie || '';
             log('[quest-rewards] Cookies disponíveis: ' + (cookies ? cookies.length : 0) + ' chars', 'info');
             
@@ -3308,109 +3308,145 @@ function motorDeDecisaoMacro(state, villageId) {
                 HUD.set('build_general', 'idle', 'Erro: HTML inválido');
                 return { claimed: 0 };
             }
-
-            log('[quest-rewards] HTML válido recebido: ' + html.length + ' chars', 'info');
-
+            
             // Extrair hash de segurança do HTML COMPLETO
             var hashMatch = html.match(/name="h"\s+value="([a-f0-9]+)"/i);
             var securityHash = hashMatch ? hashMatch[1] : csrf;
             log('[quest-rewards] Hash de segurança extraído: ' + securityHash, 'info');
 
-            // Extrair reward_ids do HTML COMPLETO
-            var rewardIds = [];
-            var addId = function(v) {
-                if (v && !rewardIds.includes(String(v))) rewardIds.push(String(v));
-            };
-
-            // Pattern 1: onclick="...claimReward(12345)..." ou "reward_id=12345"
-            var onclickMatches = html.match(/onclick=["'][^"']*claimReward\(\s*(\d+)/gi) || [];
-            onclickMatches.forEach(function(m) {
-                var id = m.match(/\d+/);
-                if (id) addId(id[0]);
-            });
-
-            // Pattern 2: data-reward-id="12345"
-            var dataMatches = html.match(/data-reward-id=["']?(\d+)["']?/gi) || [];
-            dataMatches.forEach(function(m) {
-                var id = m.match(/\d+/);
-                if (id) addId(id[0]);
-            });
-
-            // Pattern 3: reward_id=12345 ou reward_id:12345
-            var inlineMatches = html.match(/reward_id["']?\s*[:=]\s*["']?(\d+)/gi) || [];
-            inlineMatches.forEach(function(m) {
-                var id = m.match(/\d+/);
-                if (id) addId(id[0]);
-            });
-
-            // Pattern 4: input name="reward_id" value="12345"
-            var inputMatches = html.match(/name=["']reward_id["']\s+value=["'](\d+)["']/gi) || [];
-            inputMatches.forEach(function(m) {
-                var id = m.match(/\d+/);
-                if (id) addId(id[0]);
-            });
-
-            log('[quest-rewards] ' + rewardIds.length + ' reward_id(s) encontrados: [' + rewardIds.join(', ') + ']', 'info');
-
-            if (rewardIds.length === 0) {
-                log('[quest-rewards] Nenhum reward_id encontrado. Preview:', 'warning');
-                log(html.substring(0, 500), 'info');
-                HUD.set('build_general', 'idle', 'Sem rewards encontrados');
-                return { claimed: 0 };
-            }
-
-            // Passo 2: POST sequencial para cada reward_id
-            var claimed = 0;
-            return rewardIds.reduce(function(chain, rewardId) {
-                return chain.then(function() {
-                    return new Promise(function(resolve) {
-                        setTimeout(function() {
-                            var body = 'reward_id=' + encodeURIComponent(rewardId) + '&h=' + encodeURIComponent(securityHash);
-                            GM_xmlhttpRequest({
-                                method: 'POST',
-                                url: claimUrl,
-                                headers: {
-                                    'Content-Type': 'application/x-www-form-urlencoded',
-                                    'X-Requested-With': 'XMLHttpRequest',
-                                    'Accept': 'application/json'
-                                },
-                                data: body,
-                                onload: function(res) {
-                                    var json = null;
-                                    try { json = JSON.parse(res.responseText || '{}'); } catch(e) {}
-                                    var ok = json
-                                        ? (json.success || json.ok || json.claimed || (!json.error && !json.redirect))
-                                        : (res.responseText && !res.responseText.toLowerCase().includes('error'));
-                                    if (ok) {
-                                        claimed++;
-                                        log('[quest-rewards] ✓ reward_id=' + rewardId + ' coletado!', 'success');
-                                    } else {
-                                        log('[quest-rewards] ✗ reward_id=' + rewardId + ' falhou: ' + (res.responseText || '').slice(0, 100), 'warning');
-                                    }
-                                    resolve();
-                                },
-                                onerror: function() {
-                                    log('[quest-rewards] Erro de rede no reward_id=' + rewardId, 'error');
-                                    resolve();
-                                }
-                            });
-                        }, 400);
-                    });
+            // PASSO 2: Fazer request AJAX específico para aba de rewards
+            log('[quest-rewards] Solicitando aba de rewards via AJAX...', 'info');
+            return new Promise(function(resolveInner) {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: rewardTabUrl,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Cookie': cookies
+                    },
+                    withCredentials: true,
+                    onload: function(resAjax) {
+                        log('[quest-rewards] AJAX rewards response:', 'info');
+                        log('  - status: ' + resAjax.status, 'info');
+                        log('  - length: ' + (resAjax.responseText ? resAjax.responseText.length : 0) + ' chars', 'info');
+                        if (resAjax.responseText && resAjax.responseText.length > 50) {
+                            log('[quest-rewards] AJAX preview: ' + resAjax.responseText.substring(0, 300).replace(/\s+/g, ' '), 'info');
+                        }
+                        resolveInner(resAjax.responseText || '');
+                    },
+                    onerror: function(e) {
+                        log('[quest-rewards] AJAX error: ' + JSON.stringify(e), 'error');
+                        resolveInner('');
+                    }
                 });
-            }, Promise.resolve()).then(function() {
-                if (claimed > 0) {
-                    log('[quest-rewards] Total: ' + claimed + ' recompensa(s) coletada(s)!', 'success');
-                    HUD.set('build_general', 'done', claimed + ' recompensa(s) coletada(s)!');
-                    RequestCache.clear();
-                } else {
-                    HUD.set('build_general', 'idle', 'Nenhuma recompensa aceita');
+            }).then(function(htmlRewards) {
+                // Extrair reward_ids do AJAX da aba de rewards
+                var rewardIds = [];
+                var addId = function(v) {
+                    if (v && !rewardIds.includes(String(v))) rewardIds.push(String(v));
+                };
+
+                // Pattern 1: data-reward-id="12345" (mais comum em AJAX moderno)
+                var dataMatches = htmlRewards.match(/data-reward-id=["']?(\d+)["']?/gi) || [];
+                dataMatches.forEach(function(m) {
+                    var id = m.match(/\d+/);
+                    if (id) addId(id[0]);
+                });
+
+                // Pattern 2: onclick="...claimReward(12345)..."
+                var onclickMatches = htmlRewards.match(/onclick=["'][^"']*claimReward\(\s*(\d+)/gi) || [];
+                onclickMatches.forEach(function(m) {
+                    var id = m.match(/\d+/);
+                    if (id) addId(id[0]);
+                });
+
+                // Pattern 3: reward_id=12345 ou reward_id:12345
+                var inlineMatches = htmlRewards.match(/reward_id["']?\s*[:=]\s*["']?(\d+)/gi) || [];
+                inlineMatches.forEach(function(m) {
+                    var id = m.match(/\d+/);
+                    if (id) addId(id[0]);
+                });
+
+                // Se não encontrou no AJAX, tentar fallback no HTML completo
+                if (rewardIds.length === 0) {
+                    log('[quest-rewards] Nenhum reward no AJAX, tentando fallback no HTML completo...', 'warning');
+                    
+                    var dataMatchesFull = html.match(/data-reward-id=["']?(\d+)["']?/gi) || [];
+                    dataMatchesFull.forEach(function(m) {
+                        var id = m.match(/\d+/);
+                        if (id) addId(id[0]);
+                    });
+
+                    var onclickMatchesFull = html.match(/onclick=["'][^"']*claimReward\(\s*(\d+)/gi) || [];
+                    onclickMatchesFull.forEach(function(m) {
+                        var id = m.match(/\d+/);
+                        if (id) addId(id[0]);
+                    });
                 }
-                return { claimed: claimed };
+
+                log('[quest-rewards] ' + rewardIds.length + ' reward_id(s) encontrados: [' + rewardIds.join(', ') + ']', 'info');
+
+                if (rewardIds.length === 0) {
+                    log('[quest-rewards] Nenhum reward_id encontrado. Preview AJAX:', 'warning');
+                    log(htmlRewards.substring(0, 500), 'info');
+                    log('[quest-rewards] Preview HTML completo:', 'info');
+                    log(html.substring(0, 500), 'info');
+                    HUD.set('build_general', 'idle', 'Sem rewards encontrados');
+                    return { claimed: 0 };
+                }
+
+                // Passo 3: POST sequencial para cada reward_id
+                var claimed = 0;
+                return rewardIds.reduce(function(chain, rewardId) {
+                    return chain.then(function() {
+                        return new Promise(function(resolve) {
+                            setTimeout(function() {
+                                var body = 'reward_id=' + encodeURIComponent(rewardId) + '&h=' + encodeURIComponent(securityHash);
+                                GM_xmlhttpRequest({
+                                    method: 'POST',
+                                    url: claimUrl,
+                                    headers: {
+                                        'Content-Type': 'application/x-www-form-urlencoded',
+                                        'X-Requested-With': 'XMLHttpRequest',
+                                        'Accept': 'application/json',
+                                        'Cookie': cookies
+                                    },
+                                    withCredentials: true,
+                                    data: body,
+                                    onload: function(res) {
+                                        var json = null;
+                                        try { json = JSON.parse(res.responseText || '{}'); } catch(e) {}
+                                        
+                                        log('[quest-rewards] Claim reward ' + rewardId + ':', 'info');
+                                        log('  - status: ' + res.status, 'info');
+                                        log('  - response: ' + (res.responseText ? res.responseText.substring(0, 100) : 'vazio'), 'info');
+                                        
+                                        if (res.status === 200) {
+                                            if (json && json.error) {
+                                                log('[quest-rewards] Erro ao coletar ' + rewardId + ': ' + json.error, 'error');
+                                            } else {
+                                                log('[quest-rewards] Reward ' + rewardId + ' coletado com sucesso!', 'info');
+                                                claimed++;
+                                            }
+                                        } else {
+                                            log('[quest-rewards] Erro HTTP ' + res.status + ' ao coletar ' + rewardId, 'error');
+                                        }
+                                        resolve();
+                                    },
+                                    onerror: function(e) {
+                                        log('[quest-rewards] Erro ao coletar ' + rewardId + ': ' + JSON.stringify(e), 'error');
+                                        resolve();
+                                    }
+                                });
+                            }, 300); // Delay entre claims
+                        });
+                    });
+                }, Promise.resolve()).then(function() {
+                    log('[quest-rewards] Coleta concluída: ' + claimed + '/' + rewardIds.length + ' rewards coletados', 'info');
+                    HUD.set('build_general', 'idle', 'Quests coletadas: ' + claimed);
+                    return { claimed: claimed };
+                });
             });
-        }).catch(function(e) {
-            log('[quest-rewards] Erro crítico: ' + e.message, 'error');
-            HUD.set('build_general', 'error', 'Erro quest-rewards');
-            return { claimed: 0 };
         });
     }
 
