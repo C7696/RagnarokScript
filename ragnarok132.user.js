@@ -3249,15 +3249,19 @@ function motorDeDecisaoMacro(state, villageId) {
     // 3. POST ajax=claim_reward → body: reward_id={id}&h={csrf}
     // ============================================================
     function bgClaimQuestRewards(villageId, csrf, cachedRewards) {
-        log('[quest-rewards] Iniciando coleta via AJAX direto...', 'info');
+        log('[quest-rewards] === INICIANDO CLAIM === village=' + villageId, 'info');
         HUD.set('build_general', 'running', 'Coletando recompensas de quests...');
 
         var origin = window.location.origin;
         var popupUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=quest_popup&tab=main-tab&quest=0';
         var claimUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=claim_reward';
 
+        log('[quest-rewards] URL alvo: ' + popupUrl, 'info');
+        log('[quest-rewards] CSRF disponível: ' + (csrf ? 'sim' : 'não'), 'info');
+
         // Passo 1: GET direto no ajax=quest_popup para obter HTML do modal
         return new Promise(function(resolve) {
+            log('[quest-rewards] Enviando GM_xmlhttpRequest...', 'info');
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: popupUrl,
@@ -3267,8 +3271,11 @@ function motorDeDecisaoMacro(state, villageId) {
                     'Referer': origin + '/game.php?village=' + villageId + '&screen=new_quests'
                 },
                 onload: function(res) {
-                    log('[quest-rewards] GET response status: ' + res.status, 'info');
-                    log('[quest-rewards] GET response length: ' + (res.responseText ? res.responseText.length : 0) + ' chars', 'info');
+                    log('[quest-rewards] GET response:', 'info');
+                    log('  - status: ' + res.status + ' ' + res.statusText, 'info');
+                    log('  - finalURL: ' + (res.finalUrl || 'N/A'), 'info');
+                    log('  - length: ' + (res.responseText ? res.responseText.length : 0) + ' chars', 'info');
+                    log('  - starts with {: ' + (res.responseText && res.responseText.trim().startsWith('{')), 'info');
                     if (res.responseText && res.responseText.length > 20) {
                         log('[quest-rewards] GET preview: ' + res.responseText.substring(0, 200).replace(/\s+/g, ' '), 'info');
                     }
@@ -3280,14 +3287,22 @@ function motorDeDecisaoMacro(state, villageId) {
                 }
             });
         }).then(function(html) {
-            if (!html || html.length < 100) {
-                log('[quest-rewards] ERRO: HTML vazio ou muito curto (' + (html ? html.length : 0) + ' chars)', 'error');
-                log('[quest-rewards] Verifique se há quests completas disponíveis', 'info');
-                HUD.set('build_general', 'idle', 'Sem quests disponíveis');
+            // Diagnóstico detalhado do HTML recebido
+            log('[quest-rewards] === DIAGNÓSTICO DO HTML ===', 'info');
+            log('  - HTML recebido: ' + (html ? html.length : 0) + ' chars', 'info');
+            log('  - É JSON redirect: ' + (html && html.includes('"redirect"')), 'info');
+            log('  - Contém quest-popup: ' + (html && html.includes('quest-popup')), 'info');
+            log('  - Contém reward: ' + (html && html.includes('reward')), 'info');
+            
+            if (!html || html.length < 100 || html.includes('"redirect"')) {
+                log('[quest-rewards] ERRO: HTML inválido ou redirect', 'error');
+                log('[quest-rewards] Conteúdo: ' + (html ? html.substring(0, 300) : 'vazio'), 'error');
+                log('[quest-rewards] SOLUÇÃO: Você precisa estar na tela de quests (screen=new_quests) no momento da execução', 'warning');
+                HUD.set('build_general', 'idle', 'Erro: fora da tela de quests');
                 return { claimed: 0 };
             }
 
-            log('[quest-rewards] HTML recebido: ' + html.length + ' chars', 'info');
+            log('[quest-rewards] HTML válido recebido: ' + html.length + ' chars', 'info');
 
             // Extrair hash de segurança do HTML
             var hashMatch = html.match(/name="h"\s+value="([a-f0-9]+)"/i);
