@@ -3263,13 +3263,20 @@ function motorDeDecisaoMacro(state, villageId) {
         // Passo 1: GET na página COMPLETA de quests em background
         return new Promise(function(resolve) {
             log('[quest-rewards] Enviando GM_xmlhttpRequest para página completa...', 'info');
+            
+            // CRÍTICO: Obter cookies da sessão atual para autenticar a requisição
+            var cookies = document.cookie || '';
+            log('[quest-rewards] Cookies disponíveis: ' + (cookies ? cookies.length : 0) + ' chars', 'info');
+            
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: fullPageUrl,
                 headers: {
                     'Accept': 'text/html,application/xhtml+xml',
-                    'Referer': origin + '/game.php?village=' + villageId + '&screen=overview'
+                    'Referer': origin + '/game.php?village=' + villageId + '&screen=overview',
+                    'Cookie': cookies
                 },
+                withCredentials: true,
                 onload: function(res) {
                     log('[quest-rewards] GET response:', 'info');
                     log('  - status: ' + res.status + ' ' + res.statusText, 'info');
