@@ -696,10 +696,11 @@
             acao: 'Lendo sensores',
             motivo: 'Iniciando Camadas de decisão'
         },
-        tasks: {
+            tasks: {
             flag: { label: 'Bandeira', status: 'idle', detail: '' },
             statue: { label: 'Estátua', status: 'idle', detail: '' },
             knight: { label: 'Paladino', status: 'idle', detail: '' },
+            quest: { label: 'Quests', status: 'idle', detail: '' }, // <--- ADICIONADO
             build_general: { label: 'Obras', status: 'idle', detail: '' }
         },
 
@@ -1861,23 +1862,23 @@
         var questTsKey = 'twbot_quest_ts_' + villageId;
         var lastQuestTs = GM_getValue(questTsKey, 0);
         var sinceLast = Date.now() - lastQuestTs;
-        
+
         // Força refresh se: (1) nunca buscou, (2) TTL expirou, ou (3) último resultado foi vazio
         var cachedQuest = GM_getValue('twbot_quest_html_' + villageId, '');
         var forceRefresh = !cachedQuest || sinceLast > QUEST_TTL;
-        
+
         if (forceRefresh) {
             GM_setValue(questTsKey, Date.now());
         }
-        
+
         var questUrl = origin + '/game.php?village=' + villageId + '&screen=new_quests&ajax=quest_popup&tab=main-tab&quest=0';
-        
+
         // Usar cache para reduzir requisições redundantes
         return Promise.all([
             safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=flags', true)),
             safeStr(gmGet(origin + '/game.php?village=' + villageId + '&screen=main', true)),
             statueEnabled ? getKnightState(villageId) : Promise.resolve({ canRecruit: false, isPresent: false, isRecruiting: false, statueExists: false }),
-            forceRefresh 
+            forceRefresh
                 ? safeStr(gmGet(questUrl, false)).then(function(html) {
                       // Cache do HTML cru para fallback imediato
                       GM_setValue('twbot_quest_html_' + villageId, html || '');
@@ -2413,7 +2414,7 @@ function motorDeDecisaoMacro(state, villageId) {
                     var _onMilestone = !!(activeMilestone && activeMilestone.reqs[selectedTarget] &&
                                          (activeMilestone.reqs[selectedTarget] - parseInt(state.niveis[selectedTarget] || 0)) > 0);
                     var _winner = unified[0];
-                    
+
                     // Determinar tier pela urgência dominante
                     var _urgenciaDominante = 'P4'; // Score puro
                     if (nivelAlertaFarm === 'emergencia' && selectedTarget === 'farm') _urgenciaDominante = 'P0';
@@ -2426,7 +2427,7 @@ function motorDeDecisaoMacro(state, villageId) {
                         if (tempoWinner < 120) _urgenciaDominante = 'P2';
                     }
                     else if (_onMilestone) _urgenciaDominante = 'P3';
-                    
+
                     selectedTier = _urgenciaDominante;
                     selectedScoreMargin = unified.length > 1 ? unified[0].score - unified[1].score : unified[0].score;
                     selectedAlternative = unified.length > 1 ? unified[1] : null;
@@ -3151,7 +3152,7 @@ function motorDeDecisaoMacro(state, villageId) {
                     log('[quest-rewards] FetchQuestDialog response:', 'info');
                     log('  - status: ' + res.status, 'info');
                     log('  - length: ' + (res.responseText ? res.responseText.length : 0) + ' chars', 'info');
-                    
+
                     try {
                         var data = JSON.parse(res.responseText || '{}');
                         if (data.response && data.response.dialog) {
@@ -3202,7 +3203,7 @@ function motorDeDecisaoMacro(state, villageId) {
                     log('[quest-rewards] ClaimReward response:', 'info');
                     log('  - status: ' + res.status, 'info');
                     log('  - response: ' + (res.responseText ? res.responseText.substring(0, 150) : 'vazio'), 'info');
-                    
+
                     try {
                         var data = JSON.parse(res.responseText || '{}');
                         resolve(data);
@@ -3229,7 +3230,7 @@ function motorDeDecisaoMacro(state, villageId) {
             log('[quest-rewards] Parse: HTML vazio', 'warning');
             return [];
         }
-        
+
         // Verifica se é JSON de redirecionamento (problema principal)
         if (html.trim().startsWith('{')) {
             try {
@@ -3241,11 +3242,11 @@ function motorDeDecisaoMacro(state, villageId) {
                 }
             } catch(e) {}
         }
-        
+
         // Log do tamanho e preview do HTML para diagnóstico
         var preview = html.length > 300 ? html.slice(0, 300).replace(/\s+/g, ' ') : html.replace(/\s+/g, ' ');
         log('[quest-rewards] Parse: HTML recebido (' + html.length + ' chars): ' + preview, 'info');
-        
+
         var rewards = [];
 
         // Tentativa 1: JSON direto (estrutura de rewards)
@@ -3272,11 +3273,11 @@ function motorDeDecisaoMacro(state, villageId) {
 
         // Tentativa 2: HTML parsing ampliado (nova estrutura TW)
         var doc = new DOMParser().parseFromString(html, 'text/html');
-        
+
         // Debug: verificar se há elementos conhecidos no HTML
         var hasRewardElements = doc.querySelectorAll('.quest-reward, .reward-item, [data-reward-id], form[action*="claim"], .reward-row, tr.reward, a[href*="reward_id"]').length > 0;
         log('[quest-rewards] Parse: Elementos de reward no HTML? ' + hasRewardElements, hasRewardElements ? 'info' : 'warning');
-        
+
         doc.querySelectorAll('.quest-reward, .reward-item, [data-reward-id], form[action*="claim"], .reward-row, tr.reward').forEach(function(el) {
             var idInput = el.querySelector('input[name="reward_id"], input[name="id"]');
             var formInput = el.closest && el.closest('form') && el.closest('form').querySelector('input[name="reward_id"]');
@@ -3306,7 +3307,7 @@ function motorDeDecisaoMacro(state, villageId) {
                 if (m) rewards.push({ id: m[1], wood: 0, stone: 0, iron: 0 });
             });
         }
-        
+
         // Tentativa 4: buscar por onclick com claimReward ou similar (regex melhorado)
         if (rewards.length === 0) {
             doc.querySelectorAll('[onclick*="reward_id"], [onclick*="claimReward"]').forEach(function(el) {
@@ -3315,7 +3316,7 @@ function motorDeDecisaoMacro(state, villageId) {
                 var patterns = [
                     /reward_id['\"]?\s*[:=]\s*['\"]?(\d+)/i,
                     /claimReward\s*\(\s*['\"]?(\d+)/i,
-                    /['\"](\d+)['\"]/ 
+                    /['\"](\d+)['\"]/
                 ];
                 for (var i = 0; i < patterns.length; i++) {
                     var m = onclick.match(patterns[i]);
@@ -3364,10 +3365,10 @@ function motorDeDecisaoMacro(state, villageId) {
         // Passo 1: GET na página COMPLETA de quests para obter hash
         return new Promise(function(resolve) {
             log('[quest-rewards] Enviando GM_xmlhttpRequest para página completa...', 'info');
-            
+
             var cookies = document.cookie || '';
             log('[quest-rewards] Cookies disponíveis: ' + (cookies ? cookies.length : 0) + ' chars', 'info');
-            
+
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: fullPageUrl,
@@ -3400,7 +3401,7 @@ function motorDeDecisaoMacro(state, villageId) {
             log('  - É JSON redirect: ' + (html && html.includes('"redirect"')), 'info');
             log('  - Contém quest-popup: ' + (html && html.includes('quest-popup')), 'info');
             log('  - Contém reward: ' + (html && html.includes('reward')), 'info');
-            
+
             if (!html || html.length < 500 || html.includes('"redirect"')) {
                 log('[quest-rewards] ERRO: HTML inválido ou redirect', 'error');
                 log('[quest-rewards] Conteúdo: ' + (html ? html.substring(0, 300) : 'vazio'), 'error');
@@ -3408,7 +3409,7 @@ function motorDeDecisaoMacro(state, villageId) {
                 HUD.set('build_general', 'idle', 'Erro: HTML inválido');
                 return { claimed: 0 };
             }
-            
+
             // Extrair hash de segurança do HTML COMPLETO
             var hashMatch = html.match(/name="h"\s+value="([a-f0-9]+)"/i);
             var securityHash = hashMatch ? hashMatch[1] : csrf;
@@ -3470,7 +3471,7 @@ function motorDeDecisaoMacro(state, villageId) {
                 // Se não encontrou no AJAX, tentar fallback no HTML completo
                 if (rewardIds.length === 0) {
                     log('[quest-rewards] Nenhum reward no AJAX, tentando fallback no HTML completo...', 'warning');
-                    
+
                     var dataMatchesFull = html.match(/data-reward-id=["']?(\d+)["']?/gi) || [];
                     dataMatchesFull.forEach(function(m) {
                         var id = m.match(/\d+/);
@@ -3516,11 +3517,11 @@ function motorDeDecisaoMacro(state, villageId) {
                                     onload: function(res) {
                                         var json = null;
                                         try { json = JSON.parse(res.responseText || '{}'); } catch(e) {}
-                                        
+
                                         log('[quest-rewards] Claim reward ' + rewardId + ':', 'info');
                                         log('  - status: ' + res.status, 'info');
                                         log('  - response: ' + (res.responseText ? res.responseText.substring(0, 100) : 'vazio'), 'info');
-                                        
+
                                         if (res.status === 200) {
                                             if (json && json.error) {
                                                 log('[quest-rewards] Erro ao coletar ' + rewardId + ': ' + json.error, 'error');
@@ -3643,7 +3644,7 @@ function motorDeDecisaoMacro(state, villageId) {
 
                     if (claimData.response) {
                         log('[quest-rewards] Recompensa ' + rId + ' coletada com sucesso!', 'success');
-                        
+
                         // Tenta atualizar a interface do jogo sem recarregar a página
                         if (typeof Questlines !== 'undefined' && typeof Questlines.update === 'function') {
                             try { Questlines.update(); } catch(e) {}
