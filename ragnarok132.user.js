@@ -3263,12 +3263,19 @@ function motorDeDecisaoMacro(state, villageId) {
                 url: popupUrl,
                 headers: {
                     'Accept': 'text/html,application/xhtml+xml',
-                    'X-Requested-With': 'XMLHttpRequest'
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': origin + '/game.php?village=' + villageId + '&screen=new_quests'
                 },
                 onload: function(res) {
+                    log('[quest-rewards] GET response status: ' + res.status, 'info');
+                    log('[quest-rewards] GET response length: ' + (res.responseText ? res.responseText.length : 0) + ' chars', 'info');
+                    if (res.responseText && res.responseText.length > 20) {
+                        log('[quest-rewards] GET preview: ' + res.responseText.substring(0, 200).replace(/\s+/g, ' '), 'info');
+                    }
                     resolve(res.responseText || '');
                 },
-                onerror: function() {
+                onerror: function(e) {
+                    log('[quest-rewards] GET error: ' + JSON.stringify(e), 'error');
                     resolve('');
                 }
             });
