@@ -37,6 +37,7 @@
         autoRecruitKnight: true,
         autoBuildStatue: true,
         autoRushStatue: true,    // Finaliza estátua com ouro se disponível
+        autoUnlockScavenge: false, // DESBLOQUEIO AUTOMÁTICO DE COLETAS (opcional)
         checklistDelay: 1000,    // Delay inicial reduzido para 1s
 
         // --- OTIMIZAÇÕES DE PERFORMANCE ---
@@ -854,8 +855,9 @@
             flag: { label: 'Bandeira', status: 'idle', detail: '' },
             statue: { label: 'Estátua', status: 'idle', detail: '' },
             knight: { label: 'Paladino', status: 'idle', detail: '' },
-            quest: { label: 'Quests', status: 'idle', detail: '' }, // <--- ADICIONADO
-            build_general: { label: 'Obras', status: 'idle', detail: '' }
+            quest: { label: 'Quests', status: 'idle', detail: '' },
+            build_general: { label: 'Obras', status: 'idle', detail: '' },
+            scavenge: { label: 'Coletas', status: 'idle', detail: '' }
         },
 
         toggleObsMode: function () {
@@ -1599,6 +1601,111 @@
                 log('[knight] Recrutamento iniciado com sucesso!', 'success');
                 return true;
             });
+        });
+    }
+
+    // ============================================================
+    // DESBLOQUEIO DE COLETAS (SCAVENGE)
+    // ============================================================
+    function bgUnlockScavenge(villageId, optionId) {
+        log('[scavenge] Tentando desbloquear coleta (option_id=' + optionId + ')...', 'info');
+        
+        // Obter token CSRF
+        var csrf = null;
+        try {
+            if (typeof unsafeWindow !== 'undefined' && unsafeWindow.game_data) {
+                csrf = unsafeWindow.game_data.csrf;
+            } else if (typeof game_data !== 'undefined' && game_data) {
+                csrf = game_data.csrf;
+            }
+        } catch(e) {}
+        
+        if (!csrf) {
+            log('[scavenge] Erro: CSRF não encontrado', 'error');
+            return Promise.reject(new Error('CSRF não encontrado'));
+        }
+        
+        var unlockUrl = window.location.origin + '/game.php?village=' + villageId + '&screen=scavenge_api&ajaxaction=start_unlock';
+        var body = 'village_id=' + villageId + '&option_id=' + optionId + '&h=' + csrf;
+        
+        return twFetch(unlockUrl, 'POST', body).then(function (resp) {
+            var json = {};
+            try { json = JSON.parse(resp); } catch(e) {}
+            
+            if (json && json.error) {
+                log('[scavenge] Erro ao desbloquear: ' + (json.error[0] || JSON.stringify(json.error)), 'error');
+                return false;
+            }
+            log('[scavenge] Coleta desbloqueada com sucesso!', 'success');
+            return true;
+        }).catch(function (err) {
+            log('[scavenge] Erro de rede: ' + err.message, 'error');
+            return false;
+        });
+    }
+    
+    // Detecta se há coletas bloqueadas e retorna o option_id disponível
+    function detectScavengeOptions(villageId) {
+        return new Promise(function(resolve) {
+            var scavengeUrl = window.location.origin + '/game.php?village=' + villageId + '&screen=scavenge_api';
+            gmGet(scavengeUrl).then(function(html) {
+                // Procura por botões de desbloqueio no HTML
+                // Padrão: option_id nos botões do tipo "start_unlock"
+                var patterns = [
+                    /data-option-id=["'](\d+)["']/gi,
+                    /option_id[\"']?\s*[:=]\s*[\"']?(\d+)/gi,
+                    /name=["']option_id["']\s+value=["'](\d+)["']/gi
+                ];
+                
+                for (var i = 0; i < patterns.length; i++) {
+                    var matches = html.matchAll(patterns[i]);
+                    for (var match of matches) {
+                        var optId = parseInt(match[1]);
+                        if (!isNaN(optId)) {
+                            log('[scavenge] Opção de desbloqueio detectada: option_id=' + optId, 'info');
+                            resolve({ available: true, optionId: optId });
+                            return;
+                        }
+                    }
+                }
+                
+                // Se não encontrou, verifica se já está desbloqueado
+                if (html.indexOf('scavenge_active') > -1 || html.indexOf('coleta ativa') > -1) {
+                    resolve({ available: false, reason: 'Já desbloqueado' });
+                } else {
+                    resolve({ available: false, reason: 'Nenhuma opção encontrada' });
+                }
+            }).catch(function(err) {
+                log('[scavenge] Erro ao detectar opções: ' + err.message, 'error');
+                resolve({ available: false, reason: 'Erro na detecção' });
+            });
+        });
+    }
+    
+    // Função principal que verifica e desbloqueia automaticamente
+    function checkAndUnlockScavenge(villageId) {
+        if (!CONFIG.autoUnlockScavenge) {
+            return Promise.resolve(false);
+        }
+        
+        log('[scavenge] Verificando coletas bloqueadas...', 'info');
+        return detectScavengeOptions(villageId).then(function(result) {
+            if (result.available && result.optionId) {
+                log('[scavenge] Coleta bloqueada detectada! Desbloqueando...', 'info');
+                HUD.set('scavenge', 'running', 'Desbloqueando coleta...');
+                return bgUnlockScavenge(villageId, result.optionId).then(function(success) {
+                    if (success) {
+                        HUD.set('scavenge', 'done', 'Desbloqueada!');
+                    } else {
+                        HUD.set('scavenge', 'error', 'Falha no desbloqueio');
+                    }
+                    return success;
+                });
+            } else {
+                log('[scavenge] ' + (result.reason || 'Sem coletas para desbloquear'), 'info');
+                HUD.set('scavenge', 'idle', result.reason || 'OK');
+                return false;
+            }
         });
     }
     // ============================================================
@@ -2758,6 +2865,15 @@ function motorDeDecisaoMacro(state, villageId) {
             }
         } else {
             HUD.set('knight', 'done', 'Paladino ativo');
+        }
+
+        // 4. DESBLOQUEIO DE COLETAS (SCAVENGE) - Opcional, controlado por CONFIG.autoUnlockScavenge
+        if (CONFIG.autoUnlockScavenge) {
+            log('[scavenge] Verificação automática de coletas bloqueadas habilitada', 'info');
+            tasks.push({ id: 'unlock_scavenge', action: 'DO' });
+            HUD.set('scavenge', 'running', 'Verificando...');
+        } else {
+            HUD.set('scavenge', 'idle', 'Auto desbloqueio OFF');
         }
 
         // 4. MARCOS ESTRATÉGICOS (Milestones) - roadmap global + perfil da aldeia
@@ -4683,6 +4799,18 @@ function motorDeDecisaoMacro(state, villageId) {
                                     log('[motorDeDecisao] Sem recompensas de quest disponíveis no momento.', 'info');
                                 }
                                 return result;
+                            });
+                    }
+                    else if (task.id === 'unlock_scavenge') {
+                        p = checkAndUnlockScavenge(villageId)
+                            .then(function(success) {
+                                if (success) {
+                                    VillageMemory.recordSuccess(villageId, 'unlock_scavenge');
+                                    log('[motorDeDecisao] Coleta desbloqueada com sucesso!', 'success');
+                                } else {
+                                    VillageMemory.recordError(villageId, 'unlock_scavenge', 'scavenge_fail');
+                                }
+                                return success;
                             });
                     }
 
