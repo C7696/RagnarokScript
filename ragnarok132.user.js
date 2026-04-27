@@ -2158,11 +2158,20 @@
             r.prod.stone = parseProdTitle(els.stone);
             r.prod.iron  = parseProdTitle(els.iron);
 
-            // Farm / população: td[data-title="Fazenda"] → "643/729"
-            var farmEl = document.querySelector('[data-title="Fazenda"], [data-title="Farm"], [data-title="fazenda"]');
-            if (farmEl) {
-                var fm = farmEl.textContent.trim().match(/(\d+)\s*\/\s*(\d+)/);
-                if (fm) { r.pop.current = parseInt(fm[1])||0; r.pop.max = parseInt(fm[2])||0; }
+            // Farm / população: spans dedicados #pop_current_label e #pop_max_label (seletores confirmados)
+            var popCurrentEl = document.querySelector('span#pop_current_label');
+            var popMaxEl     = document.querySelector('span#pop_max_label');
+            
+            if (popCurrentEl && popMaxEl) {
+                r.pop.current = parseInt(popCurrentEl.textContent.trim().replace(/[^0-9]/g, '')) || 0;
+                r.pop.max     = parseInt(popMaxEl.textContent.trim().replace(/[^0-9]/g, '')) || 0;
+            } else {
+                // Fallback: tentar seletor antigo por data-title
+                var farmEl = document.querySelector('[data-title="Fazenda"], [data-title="Farm"], [data-title="fazenda"]');
+                if (farmEl) {
+                    var fm = farmEl.textContent.trim().match(/(\d+)\s*\/\s*(\d+)/);
+                    if (fm) { r.pop.current = parseInt(fm[1])||0; r.pop.max = parseInt(fm[2])||0; }
+                }
             }
 
             r.ok = r.wood > 0 || r.stone > 0 || r.iron > 0;
