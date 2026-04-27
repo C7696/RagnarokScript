@@ -37,7 +37,6 @@
         autoRecruitKnight: true,
         autoBuildStatue: true,
         autoRushStatue: true,    // Finaliza estátua com ouro se disponível
-        autoUnlockScavenge: false, // DESBLOQUEIO AUTOMÁTICO DE COLETAS (opcional)
         checklistDelay: 1000,    // Delay inicial reduzido para 1s
 
         // --- OTIMIZAÇÕES DE PERFORMANCE ---
@@ -55,7 +54,10 @@
         processBatchSize: 5,     // Processar até 5 tarefas por ciclo
 
         // Modo Observação: analisa sem executar
-        observationMode: GM_getValue('tw_obs_mode', false)
+        observationMode: GM_getValue('tw_obs_mode', false),
+
+        // Configurações persistentes (carregadas do storage)
+        autoUnlockScavenge: GM_getValue('tw_auto_unlock_scavenge', true) // DESBLOQUEIO AUTOMÁTICO DE COLETAS (ATIVADO POR PADRÃO)
     };
 
     // Cache system para evitar requisições redundantes
@@ -867,6 +869,13 @@
             this._rerender();
         },
 
+        toggleScavengeUnlock: function () {
+            CONFIG.autoUnlockScavenge = !CONFIG.autoUnlockScavenge;
+            GM_setValue('tw_auto_unlock_scavenge', CONFIG.autoUnlockScavenge);
+            log('[scavenge] Auto desbloqueio ' + (CONFIG.autoUnlockScavenge ? 'ATIVADO' : 'DESATIVADO'), 'info');
+            this._rerender();
+        },
+
         showObsReport: function (report) {
             this.obsReport = report;
             this._rerender();
@@ -892,9 +901,17 @@
                     ? 'background:#c0392b;color:#fff;'
                     : 'background:#2c3e50;color:#7f8c8d;');
             var obsBtn = '<span id="tw-hud-obs-toggle" style="' + obsBtnStyle + '">' + (this.obsMode ? '👁 OBS' : '▶ LIVE') + '</span>';
+            
+            // Botão de toggle para desbloqueio de coletas
+            var scavBtnStyle = 'cursor:pointer;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:bold;margin-right:6px;'
+                + (CONFIG.autoUnlockScavenge
+                    ? 'background:#27ae60;color:#fff;'
+                    : 'background:#2c3e50;color:#7f8c8d;');
+            var scavBtn = '<span id="tw-hud-scav-toggle" style="' + scavBtnStyle + '" title="Auto Desbloquear Coletas">🔓 ' + (CONFIG.autoUnlockScavenge ? 'ON' : 'OFF') + '</span>';
+            
             var hdr = '<div id="tw-hud-toggle" style="padding:10px;cursor:pointer;color:#f39c12;font-weight:bold;background:#1a1c20;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;border-top-left-radius:10px;border-top-right-radius:10px;">'
                     + '<span>⚔️ Agente Gerencial TW</span>'
-                    + '<div style="display:flex;align-items:center;">' + obsBtn + '<span>' + (this.minimized ? '[ + ]' : '[ — ]') + '</span></div>'
+                    + '<div style="display:flex;align-items:center;">' + scavBtn + obsBtn + '<span>' + (this.minimized ? '[ + ]' : '[ — ]') + '</span></div>'
                     + '</div>';
 
             if (this.minimized) return hdr;
@@ -1103,6 +1120,7 @@
             if (this.el) this.el.innerHTML = this._html();
             this.el.querySelector('#tw-hud-toggle').onclick = () => { this.minimized = !this.minimized; GM_setValue('tw_hud_min', this.minimized); this._rerender(); };
             this.el.querySelector('#tw-hud-obs-toggle').onclick = (e) => { e.stopPropagation(); this.toggleObsMode(); };
+            this.el.querySelector('#tw-hud-scav-toggle').onclick = (e) => { e.stopPropagation(); this.toggleScavengeUnlock(); };
             this._bindButtons();
         },
 
