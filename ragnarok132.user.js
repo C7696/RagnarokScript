@@ -1928,15 +1928,8 @@
         var buildRow = mainDoc.querySelector('#main_buildrow_' + buildingId);
         if (buildRow) {
             if (buildRow.style.display === 'none' || buildRow.classList.contains('hidden')) return false;
-            // Bloqueia apenas se houver countdown ATIVO (data-endtime = building is HEAD of queue now).
-            // .timer sem data-endtime é só o tempo estimado de obra — NÃO bloqueia o botão.
-            var activeTimer = buildRow.querySelector(
-                '.timer[data-endtime], .countdown[data-endtime], .build_order_time[data-endtime]'
-            );
-            if (activeTimer && activeTimer.textContent.trim()) return false;
-            // Bloqueia se a linha estiver marcada explicitamente como "em construção"
-            if (buildRow.classList.contains('in_progress') || buildRow.classList.contains('upgrading') ||
-                buildRow.querySelector('.in_progress, .upgrading, .building-active')) return false;
+            var timerEl = buildRow.querySelector('.timer, .countdown, [id*="timer_"]');
+            if (timerEl && timerEl.textContent.trim()) return false;
             var maxEl = buildRow.querySelector('.max-level, .level_max, .all, [data-max-level], .upgrade-button.all');
             if (maxEl) return false;
             return true;
@@ -2344,16 +2337,7 @@
                 populacao: { current: finalPop, max: finalPopMax },
                 buildQueueCost: queueCost,   // consumo comprometido na fila
                 niveis: (rawData.village || {}).buildings,
-                filaBuilds: (function() {
-                    // Conta apenas linhas reais da fila de construção (id=order_*)
-                    var qRows = mainDoc.querySelectorAll(
-                        '#build_queue tr[id^="order_"], .buildqueue_container tr[id^="order_"], tr[id^="order_"]'
-                    );
-                    if (qRows.length > 0) return qRows.length;
-                    // Fallback: timers dentro da seção de fila (não no buildrow de edifício)
-                    var qSection = mainDoc.querySelector('#build_queue, .buildqueue_container, #queue');
-                    return qSection ? qSection.querySelectorAll('.timer, .time_remaining').length : 0;
-                })(),
+                filaBuilds: mainDoc.querySelectorAll('.lit-item, #build_queue tr .timer').length,
                 rushIds: rushCandidates,
                 knightRushId: knightRushId,
                 premium: { ativo: !!(rawData.features?.Premium?.active) },
@@ -3118,10 +3102,7 @@ function motorDeDecisaoMacro(state, villageId) {
                                    el.parentElement?.classList.contains('disabled');
 
                 const text = (el.innerText || el.value || "").toLowerCase();
-                const isAction = text.includes('bauen') || text.includes('ausbauen') || text.includes('stufe') ||
-                                 text.includes('construir') || text.includes('upgrade') || text.includes('melhorar') ||
-                                 text.includes('nível') || text.includes('nivel') || text.includes('ausbau') ||
-                                 el.id.includes('buildlink');
+                const isAction = text.includes('bauen') || text.includes('ausbauen') || text.includes('stufe') || el.id.includes('buildlink');
 
                 if (!isDisabled && (isAction || el.id.includes('buildlink'))) {
                     btn = el;
@@ -3606,8 +3587,6 @@ function motorDeDecisaoMacro(state, villageId) {
                 _bs.confirmed = (_bs.confirmed || 0) + 1;
                 GM_setValue('twbot_build_stats', JSON.stringify(_bs));
             })();
-            // Invalida cache para que o próximo ciclo leia o estado real (fila atualizada)
-            RequestCache.clear();
             VillageMemory.recordSuccess(villageId, building);
             return { ok: true, reason: 'ajax' };
         }
