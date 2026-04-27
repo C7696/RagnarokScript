@@ -755,6 +755,10 @@
         candidates:    [],
         forcedTarget:  null,
         pinnedBuilding: GM_getValue('tw_hud_pin', null),
+        // Máquina de estados do pin: ACTIVE, COOLING, FAILED
+        pinState: GM_getValue('tw_hud_pin_state', 'ACTIVE'),
+        pinFailCount: GM_getValue('tw_hud_pin_fails', 0),
+        pinCooldownUntil: GM_getValue('tw_hud_pin_cooldown', 0),
 
         setCandidates: function(list) {
             this.candidates = list || [];
@@ -769,12 +773,72 @@
         setPin: function(building) {
             if (this.pinnedBuilding === building) {
                 this.pinnedBuilding = null;
+                this.pinState = 'ACTIVE';
+                this.pinFailCount = 0;
+                this.pinCooldownUntil = 0;
                 GM_deleteValue('tw_hud_pin');
+                GM_deleteValue('tw_hud_pin_state');
+                GM_deleteValue('tw_hud_pin_fails');
+                GM_deleteValue('tw_hud_pin_cooldown');
                 log('[HUD] 📌 Pin removido', 'info');
             } else {
                 this.pinnedBuilding = building;
+                this.pinState = 'ACTIVE';
+                this.pinFailCount = 0;
+                this.pinCooldownUntil = 0;
                 GM_setValue('tw_hud_pin', building);
+                GM_setValue('tw_hud_pin_state', 'ACTIVE');
+                GM_setValue('tw_hud_pin_fails', 0);
+                GM_setValue('tw_hud_pin_cooldown', 0);
                 log('[HUD] 📌 ' + building + ' fixado como próxima construção', 'warning');
+            }
+            this._rerender();
+        },
+
+        // Atualizar estado do pin baseado em bloqueios
+        updatePinState: function() {
+            if (!this.pinnedBuilding) return;
+            
+            var now = Date.now();
+            
+            // Se estiver em COOLING e cooldown expirou, volta para ACTIVE
+            if (this.pinState === 'COOLING' && now >= this.pinCooldownUntil) {
+                this.pinState = 'ACTIVE';
+                this.pinFailCount = 0;
+                this.pinCooldownUntil = 0;
+                GM_setValue('tw_hud_pin_state', 'ACTIVE');
+                GM_setValue('tw_hud_pin_fails', 0);
+                GM_setValue('tw_hud_pin_cooldown', 0);
+                log('[HUD] 📌 Pin voltou ao estado ACTIVE', 'info');
+            }
+            
+            // Se estiver em FAILED por 3+ bloqueios, auto-libera o pin
+            if (this.pinFailCount >= 3) {
+                this.pinState = 'FAILED';
+                GM_setValue('tw_hud_pin_state', 'FAILED');
+                log('[HUD] 📌 Pin em estado FAILED após ' + this.pinFailCount + ' bloqueios consecutivos - auto-liberando', 'warning');
+                this.setPin(null); // Remove o pin
+            }
+        },
+
+        // Registrar bloqueio do pin
+        recordPinBlock: function() {
+            if (!this.pinnedBuilding) return;
+            
+            this.pinFailCount++;
+            GM_setValue('tw_hud_pin_fails', this.pinFailCount);
+            
+            if (this.pinFailCount < 3) {
+                this.pinState = 'COOLING';
+                this.pinCooldownUntil = Date.now() + 600000; // 10 minutos
+                GM_setValue('tw_hud_pin_state', 'COOLING');
+                GM_setValue('tw_hud_pin_cooldown', this.pinCooldownUntil);
+                log('[HUD] 📌 Pin entrou em COOLING (bloqueio #' + this.pinFailCount + ')', 'warning');
+            } else {
+                this.pinState = 'FAILED';
+                GM_setValue('tw_hud_pin_state', 'FAILED');
+                log('[HUD] 📌 Pin entrou em FAILED (bloqueio #' + this.pinFailCount + ') - auto-liberando', 'warning');
+                this.setPin(null); // Remove o pin
             }
             this._rerender();
         },
@@ -3006,9 +3070,48 @@ function motorDeDecisaoMacro(state, villageId) {
                 }
             }
             // ── Override manual do HUD (pin > force > score) ──
+            // Atualizar estado do pin antes de verificar
+            HUD.updatePinState();
+            
             if (HUD.pinnedBuilding && state.podeSerConstruido && state.podeSerConstruido[HUD.pinnedBuilding]) {
-                selectedTarget = HUD.pinnedBuilding;
-                log('[HUD] 📌 Usando edifício fixado: ' + selectedTarget, 'warning');
+                // Verificar se pin está em COOLING (bloqueado temporariamente)
+                if (HUD.pinState === 'COOLING') {
+                    var remainingMs = HUD.pinCooldownUntil - Date.now();
+                    var remainingMin = Math.ceil(remainingMs / 60000);
+                    var remainingSec = Math.ceil(remainingMs / 1000) % 60;
+                    var timeRemaining = remainingMin > 0 
+                        ? remainingMin + 'min' + (remainingSec > 0 ? ' ' + remainingSec + 's' : '')
+                        : remainingSec + 's';
+                    
+                    // Buscar próxima alternativa da lista de candidatos
+                    var nextAlternative = null;
+                    var nextScore = null;
+                    if (HUD.candidates && HUD.candidates.length > 1) {
+                        for (var i = 1; i < HUD.candidates.length; i++) {
+                            var cand = HUD.candidates[i];
+                            if (!VillageMemory.isTargetBlocked(villageId, cand.ed) && state.podeSerConstruido && state.podeSerConstruido[cand.ed]) {
+                                nextAlternative = cand.ed;
+                                nextScore = Math.round(cand.score);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    visHUD.gargalo = HUD.pinnedBuilding.toUpperCase() + ' fixado — COOLING (' + timeRemaining + ' restando)';
+                    visHUD.motivo = nextAlternative 
+                        ? 'Usando: ' + nextAlternative.toUpperCase() + ' (próximo na lista, score ' + nextScore + ')'
+                        : 'Aguardando desbloqueio do pin';
+                    
+                    selectedTarget = nextAlternative;
+                    log('[HUD] 📌 Pin em COOLING, usando alternativa: ' + nextAlternative, 'warning');
+                } else if (HUD.pinState === 'FAILED') {
+                    visHUD.gargalo = 'PIN FALHOU - auto-liberado após 3+ bloqueios';
+                    visHUD.motivo = 'Selecione um novo pin manualmente';
+                    selectedTarget = null;
+                } else {
+                    selectedTarget = HUD.pinnedBuilding;
+                    log('[HUD] 📌 Usando edifício fixado (ACTIVE): ' + selectedTarget, 'warning');
+                }
             } else if (HUD.forcedTarget) {
                 var _ft = HUD.forcedTarget;
                 HUD.forcedTarget = null;
@@ -3022,6 +3125,11 @@ function motorDeDecisaoMacro(state, villageId) {
                 // Verificar se target foi bloqueado por falhas anteriores ou pin
                 if (VillageMemory.isTargetBlocked(villageId, selectedTarget)) {
                     log('[motorDeDecisao] Target ' + selectedTarget + ' está bloqueado, buscando alternativa', 'warning');
+                    
+                    // Se for o pin, registrar bloqueio na máquina de estados
+                    if (HUD.pinnedBuilding === selectedTarget) {
+                        HUD.recordPinBlock();
+                    }
                     
                     // Calcular tempo restante de bloqueio
                     var mem = VillageMemory.get(villageId);
@@ -3053,8 +3161,11 @@ function motorDeDecisaoMacro(state, villageId) {
                         ? 'Usando: ' + nextAlternative.toUpperCase() + ' (próximo na lista, score ' + nextScore + ')'
                         : 'Aguardando desbloqueio ou vaga na fila';
                     
-                    // Não adicionar este target às tarefas
-                } else {
+                    selectedTarget = nextAlternative;
+                }
+                
+                // Se ainda tiver target após desbloqueio/alternativa, adicionar à tarefa
+                if (selectedTarget && !VillageMemory.isTargetBlocked(villageId, selectedTarget)) {
                     tasks.push({ id: 'build_general', action: 'DO', target: selectedTarget, tier: selectedTier, scoreMargin: selectedScoreMargin, alternative: selectedAlternative, roiExpected: unified[0].roiRaw || unified[0].roi, levelBuilt: parseInt(state.niveis[selectedTarget] || 0) + 1 });
                     visHUD.acao = selectedTarget.toUpperCase();
                     HUD.set('build_general', 'running', 'Construindo ' + selectedTarget);
