@@ -3019,11 +3019,40 @@ function motorDeDecisaoMacro(state, villageId) {
             }
 
             if (selectedTarget) {
-                // Verificar se target foi bloqueado por falhas anteriores
+                // Verificar se target foi bloqueado por falhas anteriores ou pin
                 if (VillageMemory.isTargetBlocked(villageId, selectedTarget)) {
                     log('[motorDeDecisao] Target ' + selectedTarget + ' está bloqueado, buscando alternativa', 'warning');
-                    visHUD.gargalo = 'BLOQUEADO';
-                    visHUD.motivo = 'Target anterior falhou, evitando repetição';
+                    
+                    // Calcular tempo restante de bloqueio
+                    var mem = VillageMemory.get(villageId);
+                    var blocked = mem.blockedTargets || {};
+                    var blockExpiry = blocked[selectedTarget] || 0;
+                    var remainingMs = blockExpiry - Date.now();
+                    var remainingMin = Math.ceil(remainingMs / 60000);
+                    var remainingSec = Math.ceil(remainingMs / 1000) % 60;
+                    var timeRemaining = remainingMin > 0 
+                        ? remainingMin + 'min' + (remainingSec > 0 ? ' ' + remainingSec + 's' : '')
+                        : remainingSec + 's';
+                    
+                    // Buscar próxima alternativa da lista de candidatos
+                    var nextAlternative = null;
+                    var nextScore = null;
+                    if (HUD.candidates && HUD.candidates.length > 1) {
+                        for (var i = 1; i < HUD.candidates.length; i++) {
+                            var cand = HUD.candidates[i];
+                            if (!VillageMemory.isTargetBlocked(villageId, cand.ed) && state.podeSerConstruido && state.podeSerConstruido[cand.ed]) {
+                                nextAlternative = cand.ed;
+                                nextScore = Math.round(cand.score);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    visHUD.gargalo = selectedTarget.toUpperCase() + ' fixado — bloqueado (' + timeRemaining + ' restando)';
+                    visHUD.motivo = nextAlternative 
+                        ? 'Usando: ' + nextAlternative.toUpperCase() + ' (próximo na lista, score ' + nextScore + ')'
+                        : 'Aguardando desbloqueio ou vaga na fila';
+                    
                     // Não adicionar este target às tarefas
                 } else {
                     tasks.push({ id: 'build_general', action: 'DO', target: selectedTarget, tier: selectedTier, scoreMargin: selectedScoreMargin, alternative: selectedAlternative, roiExpected: unified[0].roiRaw || unified[0].roi, levelBuilt: parseInt(state.niveis[selectedTarget] || 0) + 1 });
