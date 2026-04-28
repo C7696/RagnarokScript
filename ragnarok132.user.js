@@ -566,49 +566,47 @@
     // ============================================================
     // CÁLCULO DE MELHOR ROI DE RECURSOS
     // ============================================================
+    // Quando não há milestone rígido (Estado 4+), o bot calcula qual mina
+    // devolve o investimento mais rápido (payback time).
+    // Argila tem peso extra por ser gargalo crítico do jogo.
     function calculateBestResourceROI(state) {
-        var candidates = [];
+        const resources = ['wood', 'stone', 'iron'];
+        let bestChoice = null;
+        let bestPayback = Infinity;
+
+        for (let res of resources) {
+            let currentLevel = parseInt(state.buildings[res] || 0);
+            if (currentLevel >= 25) continue; // Limite prático
+
+            // 1. Custo do próximo nível (Fórmula TW: Base * 1.55^Nível)
+            // Custos base aproximados do Tribal Wars
+            const BASE_COSTS = { wood: 60, stone: 60, iron: 60 };
+            let baseCost = BASE_COSTS[res];
+            let nextCost = baseCost * Math.pow(1.55, currentLevel);
+
+            // 2. Aumento de produção (~16.3% por nível no TW)
+            let currentProd = state.producao[res] || 0;
+            let prodIncrease = currentProd * 0.163;
+
+            // Evitar divisão por zero se produção for muito baixa
+            if (prodIncrease <= 0) prodIncrease = 1;
+
+            // 3. Payback Time (Horas para a mina se pagar)
+            // Quanto tempo levo para gerar o valor que gastei nela?
+            let totalCost = nextCost; // Simplificação: considera custo total em recursos equivalentes
+            let paybackHours = totalCost / prodIncrease;
+
+            // Peso para Argila (Gargalo do jogo: valorizamos argila além do ROI matemático puro)
+            // 15% de desconto no tempo de payback para argila
+            if (res === 'stone') paybackHours *= 0.85;
+
+            if (paybackHours < bestPayback) {
+                bestPayback = paybackHours;
+                bestChoice = { building: res, paybackHours: paybackHours };
+            }
+        }
         
-        // Avalia apenas minas de recursos e storage
-        ['wood', 'stone', 'iron', 'storage'].forEach(function(building) {
-            var currentLevel = parseInt(state.buildings[building] || 0);
-            var nextLevel = currentLevel + 1;
-            
-            // Custo base aproximado (pode ser refinado com dados reais do jogo)
-            var costMultiplier = Math.pow(1.5, currentLevel);
-            var baseCost = building === 'storage' ? 200 : 60;
-            
-            var cost = {
-                wood: Math.floor(baseCost * costMultiplier * (building === 'wood' ? 1.5 : 1)),
-                stone: Math.floor(baseCost * costMultiplier * (building === 'stone' ? 1.5 : 1)),
-                iron: Math.floor(baseCost * costMultiplier * (building === 'iron' ? 1.5 : 1))
-            };
-            
-            // Benefício: aumento de produção por hora
-            var productionGain = 0;
-            if (building === 'wood') productionGain = state.producao.wood * 0.163; // ~16.3%/nível
-            else if (building === 'stone') productionGain = state.producao.stone * 0.163;
-            else if (building === 'iron') productionGain = state.producao.iron * 0.163;
-            else if (building === 'storage') productionGain = state.recursos.max * 0.5; // +50% capacidade
-            
-            // Payback time em horas
-            var totalCost = cost.wood + cost.stone + cost.iron;
-            var paybackHours = totalCost / (productionGain || 1);
-            
-            candidates.push({
-                building: building,
-                cost: cost,
-                paybackHours: paybackHours,
-                productionGain: productionGain
-            });
-        });
-        
-        // Ordena por menor payback time
-        candidates.sort(function(a, b) {
-            return a.paybackHours - b.paybackHours;
-        });
-        
-        return candidates.length > 0 ? candidates[0] : null;
+        return bestChoice;
     }
 
     // ============================================================
