@@ -1,1 +1,5 @@
-Nothing should be ignored based on the provided file changes. The modified file 'ragnarok132.user.js' is a source code file that should not be added to .gitignore.
+```
+# Userscripts
+*.user.js.bak
+*.user.js~
+```
