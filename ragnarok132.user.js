@@ -137,6 +137,108 @@
         }
     };
     // ============================================================
+    // ============================================================
+    // MÁQUINA DE ESTADOS RÍGIDA: CAMINHO CRÍTICO PARA LC (EARLY GAME)
+    // Pesos não importam aqui. O que importa é o menor tempo para LC.
+    // LC = Cavalaria Leve: carrega 80 recursos, anda rápido, custo-benefício máximo
+    // ============================================================
+    
+    // Pré-requisitos do LC: Quartel 5, Estábulo 3, Ferreiro 5, HQ 10
+    const LC_PATH_STATES = {
+        // ESTADO 1: A BASE (0-500 pts)
+        STATE_1_BASE: {
+            id: 1,
+            label: 'Estado 1: A Base (0-500 pts)',
+            description: 'Fundações mínimas para começar',
+            priority: 'CRITICAL',
+            buildOrder: [
+                { building: 'main', level: 3, reason: 'Bônus de velocidade' },
+                { building: 'wood', level: 4, reason: 'Foco em Argila sempre!' },
+                { building: 'stone', level: 4, reason: 'Suporte básico' },
+                { building: 'iron', level: 3, reason: 'Mínimo necessário' },
+                { building: 'main', level: 5, reason: 'Destrava Quartel' },
+                { building: 'barracks', level: 1, reason: 'Primeiro quartel' },
+                { building: 'farm', level: 2, reason: 'Para caber 10 lanceiros' }
+            ],
+            nextStates: ['STATE_2_PREP'],
+            pointsRange: [0, 500]
+        },
+        
+        // ESTADO 2: PREPARAÇÃO PARA O RUSH (500-1500 pts)
+        // REGRA: NÃO SOBE FERREIRO AINDA. NÃO SOBE ESTÁTUA.
+        STATE_2_PREP: {
+            id: 2,
+            label: 'Estado 2: Preparação para Rush (500-1500 pts)',
+            description: 'Congelar minas no 10, focar em HQ e Quartel',
+            priority: 'HIGH',
+            rules: [
+                'NÃO SUBIR FERREIRO AINDA',
+                'NÃO SUBIR ESTÁTUA',
+                'CONGELAR MINAS NO NÍVEL 10 (ROI péssimo depois do 10 no início)'
+            ],
+            buildOrder: [
+                { building: 'wood', level: 10, reason: 'Congelar mina no 10' },
+                { building: 'stone', level: 10, reason: 'Congelar mina no 10' },
+                { building: 'iron', level: 10, reason: 'Congelar mina no 10' },
+                { building: 'barracks', level: 5, reason: 'Pré-req do Estábulo' },
+                { building: 'main', level: 10, reason: 'Acelera toda a árvore drasticamente' },
+                { building: 'farm', level: 5, reason: 'Suporte de população' }
+            ],
+            nextStates: ['STATE_3_MILITARY_GATE'],
+            pointsRange: [500, 1500]
+        },
+        
+        // ESTADO 3: O GATE MILITAR (1500-2500 pts)
+        // Aqui o bot sofre, pois gasta muito sem retorno imediato. Mas é necessário.
+        STATE_3_MILITARY_GATE: {
+            id: 3,
+            label: 'Estado 3: O Gate Militar (1500-2500 pts)',
+            description: 'Investimento pesado sem retorno imediato - NECESSÁRIO',
+            priority: 'CRITICAL',
+            rules: [
+                'GASTO ALTO SEM RETORNO IMEDIATO - MAS NECESSÁRIO',
+                'SUBIR FERREIRO APENAS AGORA!'
+            ],
+            buildOrder: [
+                { building: 'stable', level: 3, reason: 'Pré-req do LC' },
+                { building: 'smith', level: 5, reason: 'Subir o Smith apenas agora!' },
+                { building: 'farm', level: 7, reason: 'Aguentar custo pop do Estábulo' }
+            ],
+            unlockCondition: {
+                stable: 3,
+                smith: 5,
+                farm: 7,
+                barracks: 5,
+                main: 10
+            },
+            unlocksUnit: 'light_cavalry', // LC DESBLOQUEADO!
+            nextStates: ['STATE_4_POST_LC_SCALE'],
+            pointsRange: [1500, 2500]
+        },
+        
+        // ESTADO 4: ESCALA PÓS-LC (2500+ pts)
+        // Agora o saque paga a conta. O bot volta a focar em ROI.
+        STATE_4_POST_LC_SCALE: {
+            id: 4,
+            label: 'Estado 4: Escala Pós-LC (2500+ pts)',
+            description: 'Saque paga a conta - Volta a focar em ROI',
+            priority: 'NORMAL',
+            rules: [
+                'COMEÇAR A RECRUTAR LC 24/7',
+                'SAQUE PAGA A CONTA',
+                'VOLTA A FOCAR EM ROI'
+            ],
+            buildOrder: [
+                { building: 'stable', level: 10, reason: 'Mais LC' },
+                { building: 'smith', level: 10, reason: 'Melhorias militares' },
+                { building: 'barracks', level: 10, reason: 'Suporte de infantaria' },
+                { building: 'farm', level: 10, reason: 'População para exército' }
+            ],
+            recruitmentPriority: ['light_cavalry'],
+            pointsRange: [2500, Infinity]
+        }
+    };
+
     // ESTRATÉGIAS DE CRESCIMENTO (Pesos de 1 a 10)
     // ============================================================
     var STRATEGIES = {
@@ -150,6 +252,8 @@
         'FAKE_FARM':          { barracks: 10, iron: 9, farm: 8, wood: 7, stone: 6, main: 5, storage: 5, smith: 4, wall: 2, stable: 1 },
         // Hard Military Rush: ofensiva pura — ferro + quartel + estábulo + ferreiro o mais rápido possível
         'HARD_MILITARY_RUSH': { iron: 10, barracks: 10, stable: 9, smith: 8, farm: 9, wood: 5, stone: 4, main: 5, wall: 6, storage: 4 },
+        // LC RUSH: Máquina de estados rígida para Cavalaria Leve o mais rápido possível
+        'LC_RUSH':            { main: 10, farm: 9, barracks: 10, iron: 8, stable: 10, smith: 8, wood: 6, stone: 6, storage: 4, wall: 2, statue: 1 }
     };
 
 
@@ -390,6 +494,7 @@
             SPEED_START:        'speed_start',        // Rush 1000 pontos — HQ prioritário
             FAKE_FARM:          'fake_farm',          // Lanceiros baratos + farm de inativos
             HARD_MILITARY_RUSH: 'hard_military_rush', // Ofensiva pura: ferro + quartel + estábulo
+            LC_RUSH:            'lc_rush',            // Caminho crítico para Cavalaria Leve
         },
 
         // Desserializa valor que pode ter sido salvo como JSON string
@@ -3048,6 +3153,40 @@ function motorDeDecisaoMacro(state, villageId) {
 
         var visHUD = { fase: state.phase, gargalo: 'OK', meta: 'Calculando...', acao: 'Monitorando', motivo: 'Ativo' };
 
+        // ==========================================
+        // [MÁQUINA DE ESTADOS LC RUSH] - CAMINHO CRÍTICO
+        // ==========================================
+        // Se o perfil for LC_RUSH, ignora pesos e segue estados rígidos
+        var isLCRush = (memory.profile === 'lc_rush' || memory.profile === 'LC_RUSH');
+        var lcState = null;
+        var currentPoints = parseInt(memory.points || state.points || 0);
+        
+        if (isLCRush) {
+            log('[LC Rush] 🎯 Modo LC Rush ativado - Seguindo caminho crítico!', 'info');
+            
+            // Determinar estado atual baseado nos pontos
+            for (var stateKey in LC_PATH_STATES) {
+                var s = LC_PATH_STATES[stateKey];
+                if (currentPoints >= s.pointsRange[0] && currentPoints < s.pointsRange[1]) {
+                    lcState = s;
+                    break;
+                }
+            }
+            
+            if (lcState) {
+                visHUD.meta = '[LC RUSH] ' + lcState.label;
+                log('[LC Rush] Estado atual: ' + lcState.label, 'info');
+                
+                // Mostrar regras do estado atual
+                if (lcState.rules) {
+                    lcState.rules.forEach(function(rule) {
+                        log('[LC Rush] Regra: ' + rule, 'warning');
+                    });
+                }
+            }
+        }
+        // ==========================================
+
         // Verificar se deve mudar estratégia por falhas consecutivas
         if (VillageMemory.needsStrategyChange(villageId)) {
             log('[motorDeDecisao] Muitas falhas consecutivas, ajustando estratégia', 'warning');
@@ -3056,7 +3195,10 @@ function motorDeDecisaoMacro(state, villageId) {
         }
 
         // Obter pesos estratégicos baseados no perfil da aldeia (substitui profile do jogador)
-        var profileWeights = VillageMemory.getStrategyWeights(villageId);
+        // Se estiver em LC Rush, usa pesos específicos do LC_RUSH
+        var profileWeights = isLCRush 
+            ? STRATEGIES['LC_RUSH'] 
+            : VillageMemory.getStrategyWeights(villageId);
 
         // Processar observações de aprendizado pendentes (finaliza builds com > 30 min)
         var _learnProd = (state.producao.wood || 0) + (state.producao.stone || 0) + (state.producao.iron || 0);
@@ -3367,11 +3509,45 @@ function motorDeDecisaoMacro(state, villageId) {
             // Eliminado: verificações prévias rígidas (P0, P1B, P1C, P2)
             // Tudo agora compete no mesmo score com multiplicadores de urgência
             {
+                // [LC RUSH] - Se estiver em modo LC Rush, filtra candidatos pelo buildOrder do estado atual
+                var lcRushCandidates = [];
+                if (isLCRush && lcState && lcState.buildOrder) {
+                    log('[LC Rush] Filtrando construções pelo caminho crítico...', 'info');
+                    
+                    // Filtrar apenas edifícios que estão no buildOrder do estado atual
+                    lcState.buildOrder.forEach(function(target) {
+                        var ed = target.building;
+                        var targetLevel = target.level;
+                        var currentLevel = parseInt(state.niveis[ed] || 0);
+                        
+                        // Só inclui se ainda não atingiu o nível alvo
+                        if (currentLevel < targetLevel) {
+                            lcRushCandidates.push({
+                                building: ed,
+                                targetLevel: targetLevel,
+                                reason: target.reason
+                            });
+                            log('[LC Rush] Alvo LC: ' + ed + ' (nv.' + currentLevel + ' -> ' + targetLevel + ') - ' + target.reason, 'info');
+                        }
+                    });
+                    
+                    log('[LC Rush] ' + lcRushCandidates.length + ' edifícios no caminho crítico', 'info');
+                }
+                
                 var todosCandidatos = Object.keys(TW_BUILDING_REQS).filter(function(ed) {
                     if (!state.podeSerConstruido[ed]) return false;
                     if (ed === 'snob') return false;
                     if ((state.niveis[ed] || 0) >= 25) return false;
                     if (ed === 'main' && _HQ_LOCKED) return false;
+                    
+                    // [LC RUSH] - Se estiver em modo LC Rush, só permite edifícios do caminho crítico
+                    if (isLCRush && lcRushCandidates.length > 0) {
+                        var isCritical = lcRushCandidates.some(function(c) { return c.building === ed; });
+                        if (!isCritical) {
+                            return false; // Ignora edifícios fora do caminho crítico
+                        }
+                    }
+                    
                     return isBuildExecutable(ed, state, state._mainDoc);
                 });
 
@@ -5509,6 +5685,53 @@ function motorDeDecisaoMacro(state, villageId) {
             var _res  = state.recursos  || { wood: 0, stone: 0, iron: 0, max: 1 };
             var _pop  = state.populacao || { current: 0, max: 1 };
 
+            // ==========================================
+            // [LC RUSH] - Detecção automática para LC Rush
+            // ==========================================
+            // Se Quartel >= 3 E Estábulo desbloqueado OU em progresso → LC_RUSH
+            var barracksLevel = parseInt(lvl.barracks) || 0;
+            var stableLevel = parseInt(lvl.stable) || 0;
+            var smithLevel = parseInt(lvl.smith) || 0;
+            var mainLevel = parseInt(lvl.main) || 0;
+            
+            // Sinais de LC Rush: foco em quartel + estábulo + ferreiro, minas congeladas no 10
+            var isLCRushSignal = false;
+            
+            // Estado 1: Base (0-500 pts) - Quartel inicial
+            if (barracksLevel >= 1 && mainLevel >= 5 && phase === 'EARLY') {
+                isLCRushSignal = true;
+                log('[autoDetectProfile] Sinal LC Rush detectado: Quartel desbloqueado cedo', 'info');
+            }
+            
+            // Estado 2: Preparação (500-1500 pts) - Quartel 5 + minas no 10
+            if (barracksLevel >= 5 && mainLevel >= 10) {
+                var minesFrozen = (parseInt(lvl.wood) || 0) >= 10 && 
+                                  (parseInt(lvl.stone) || 0) >= 10 && 
+                                  (parseInt(lvl.iron) || 0) >= 10;
+                if (minesFrozen) {
+                    isLCRushSignal = true;
+                    log('[autoDetectProfile] Sinal LC Rush detectado: Minas congeladas no 10 + Quartel 5', 'info');
+                }
+            }
+            
+            // Estado 3: Gate Militar (1500-2500 pts) - Estábulo 3 + Ferreiro 5
+            if (stableLevel >= 1 && smithLevel >= 3) {
+                isLCRushSignal = true;
+                log('[autoDetectProfile] Sinal LC Rush detectado: Estábulo + Ferreiro em progresso', 'info');
+            }
+            
+            // Estado 4: Pós-LC (2500+ pts) - Estábulo evoluído
+            if (stableLevel >= 3) {
+                isLCRushSignal = true;
+                log('[autoDetectProfile] Sinal LC Rush detectado: Estábulo >= 3 (LC desbloqueado)', 'success');
+            }
+            
+            if (isLCRushSignal) {
+                log('[autoDetectProfile] 🎯 PERFIL LC_RUSH DETECTADO - Caminho crítico ativado!', 'success');
+                return 'lc_rush';
+            }
+            // ==========================================
+
             // Pontuação base pela composição de edifícios
             var militaryScore = (parseInt(lvl.barracks) || 0)
                 + (parseInt(lvl.stable) || 0) * 1.2
@@ -5616,7 +5839,7 @@ function motorDeDecisaoMacro(state, villageId) {
     var VillageCoordinator = {
         COORD_KEY:  'twbot_coord_ts_',   // ts da última coordenação por aldeia
         COORD_INTERVAL_MS: 14400000,     // re-coordena a cada 4h
-        MANUAL_PROFILES: ['speed_start', 'fake_farm', 'hard_military_rush'],
+        MANUAL_PROFILES: ['speed_start', 'fake_farm', 'hard_military_rush', 'lc_rush'],
         ROLE_PLAN: ['economic', 'military', 'support', 'balanced'], // por ordem de desenvolvimento
 
         // Distribui roles complementares pela frota.
