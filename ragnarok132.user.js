@@ -3685,6 +3685,18 @@
     // Nenhuma outra construção pode ser iniciada enquanto Fase 0 não estiver completa
     // ============================================================
     var PHASE0_PROFILES = ['lc_rush', 'speed_start', 'hard_military_rush'];
+    
+    // Chaves de persistência para fases de rush
+    var RUSH_PHASE_KEY_PREFIX = 'twbot_rush_phase_';
+
+    function getRushPhase(villageId) {
+        return GM_getValue(RUSH_PHASE_KEY_PREFIX + villageId, 0);
+    }
+
+    function setRushPhase(villageId, phase) {
+        GM_setValue(RUSH_PHASE_KEY_PREFIX + villageId, phase);
+        log('[Fase Rush] Aldeia ' + villageId + ' avançou para Fase ' + phase, 'success');
+    }
 
     function isPhase0Complete(state, villageId) {
         // Verifica se estátua está construída, bandeira atribuída e paladino presente/em recrutamento
@@ -3714,6 +3726,8 @@
             complete: true,
             timestamp: Date.now()
         });
+        // Avançar automaticamente para Fase 1
+        setRushPhase(villageId, 1);
         log('[Fase 0] ✅ Fase 0 concluída e persistida para aldeia ' + villageId, 'success');
     }
 
@@ -3797,6 +3811,171 @@
         return tasks;
     }
 
+    // ============================================================
+    // FASE 1 – FUNDAÇÕES PARA PERFIS DE RUSH
+    // ============================================================
+    // Ordem rígida de construções:
+    // 1. Edifício Principal nível 3
+    // 2. Madeira nível 3
+    // 3. Argila (stone) nível 3
+    // 4. Ferro nível 3
+    // 5. Edifício Principal nível 5
+    // 6. Quartel nível 1
+    // + Recrutamento de 10-15 Lanceiros assim que quartel estiver pronto
+    // ============================================================
+    function getPhase1Tasks(state, villageId) {
+        var tasks = [];
+        var memory = VillageMemory.get(villageId);
+        
+        // Lista ordenada de objetivos da Fase 1
+        var targets = [
+            { building: 'main', level: 3, reason: 'HQ Nv 3' },
+            { building: 'wood', level: 3, reason: 'Madeira Nv 3' },
+            { building: 'stone', level: 3, reason: 'Argila Nv 3' },
+            { building: 'iron', level: 3, reason: 'Ferro Nv 3' },
+            { building: 'main', level: 5, reason: 'HQ Nv 5' },
+            { building: 'barracks', level: 1, reason: 'Quartel Nv 1' }
+        ];
+        
+        // Verificar cada objetivo em ordem
+        for (var i = 0; i < targets.length; i++) {
+            var t = targets[i];
+            var currentLevel = parseInt(state.niveis[t.building] || 0);
+            
+            if (currentLevel < t.level) {
+                log('[Fase 1] 🏗️ Construindo: ' + t.reason + ' (actual: ' + currentLevel + ')', 'info');
+                tasks.push({
+                    id: 'phase1_build',
+                    action: 'DO',
+                    type: 'build_general',
+                    target: t.building,
+                    targetLevel: t.level,
+                    reason: 'Fase 1: ' + t.reason,
+                    priority: i + 1
+                });
+                // Retorna apenas a primeira construção pendente
+                return tasks;
+            }
+        }
+        
+        // Se todas as construções estão completas, verificar recrutamento de lanceiros
+        var barracksLevel = parseInt(state.niveis.barracks || 0);
+        if (barracksLevel >= 1) {
+            var freePop = state.populacao.max - state.populacao.current;
+            var recruitmentQueue = state.recruitmentQueue || [];
+            
+            // Verificar se já há lanceiros em recrutamento
+            var hasSpearman = recruitmentQueue.some(function(u) {
+                return u.unit === 'spear' || u.type === 'spearman';
+            });
+            
+            if (freePop >= 15 && !hasSpearman) {
+                var spearCount = Math.min(15, freePop);
+                log('[Fase 1] ⚔️ Recrutando ' + spearCount + ' Lanceiros', 'info');
+                tasks.push({
+                    id: 'phase1_recruit',
+                    action: 'DO',
+                    type: 'recruit',
+                    unit: 'spear',
+                    count: spearCount,
+                    reason: 'Fase 1: Recrutar lanceiros para farm',
+                    priority: 100
+                });
+                return tasks;
+            } else if (hasSpearman) {
+                log('[Fase 1] ✅ Lanceiros já em recrutamento', 'success');
+            } else if (freePop < 15) {
+                log('[Fase 1] ⏳ Aguardando população livre (actual: ' + freePop + '/15)', 'warning');
+            }
+        }
+        
+        // Se chegou aqui, Fase 1 está completa
+        return tasks;
+    }
+
+    function isPhase1Complete(state, villageId) {
+        var memory = VillageMemory.get(villageId);
+        
+        // Verificar todas as construções da Fase 1
+        var targets = [
+            { building: 'main', level: 3 },
+            { building: 'wood', level: 3 },
+            { building: 'stone', level: 3 },
+            { building: 'iron', level: 3 },
+            { building: 'main', level: 5 },
+            { building: 'barracks', level: 1 }
+        ];
+        
+        for (var i = 0; i < targets.length; i++) {
+            var t = targets[i];
+            var currentLevel = parseInt(state.niveis[t.building] || 0);
+            if (currentLevel < t.level) {
+                return false;
+            }
+        }
+        
+        // Verificar se há lanceiros em recrutamento ou já recrutados
+        var recruitmentQueue = state.recruitmentQueue || [];
+        var hasSpearman = recruitmentQueue.some(function(u) {
+            return u.unit === 'spear' || u.type === 'spearman';
+        });
+        
+        // Também verifica se já existem lanceiros na aldeia (pode haver do census)
+        var units = state.units || {};
+        var spearmanCount = parseInt(units.spear || 0);
+        
+        return hasSpearman || spearmanCount > 0;
+    }
+
+    function markPhase1Complete(villageId) {
+        setRushPhase(villageId, 2);
+        log('[Fase 1] ✅ Fase 1 concluída - avançando para Fase 2', 'success');
+    }
+
+    // ============================================================
+    // BACKGROUND: RECRUIT UNIT (Função genérica para recrutar unidades)
+    // ============================================================
+    function bgRecruitUnit(villageId, unit, count) {
+        log('[recruit] Tentando recrutar ' + count + ' ' + unit + '...', 'info');
+        
+        // Obter token CSRF
+        var csrf = null;
+        try {
+            if (typeof unsafeWindow !== 'undefined' && unsafeWindow.game_data) {
+                csrf = unsafeWindow.game_data.csrf;
+            } else if (typeof game_data !== 'undefined' && game_data) {
+                csrf = game_data.csrf;
+            }
+        } catch(e) {}
+        
+        if (!csrf) {
+            log('[recruit] Erro: CSRF não encontrado', 'error');
+            return Promise.reject(new Error('CSRF não encontrado'));
+        }
+        
+        // Determinar URL baseada no tipo de unidade
+        var recruitUrl = window.location.origin + '/game.php?village=' + villageId + '&screen=train';
+        var body = 'village_id=' + villageId + '&h=' + csrf;
+        
+        // Adicionar unidades ao corpo da requisição
+        body += '&' + unit + '=' + count;
+        
+        return twFetch(recruitUrl, 'POST', body).then(function(resp) {
+            var json = {};
+            try { json = JSON.parse(resp); } catch(e) {}
+            
+            if (json && json.error) {
+                log('[recruit] Erro ao recrutar: ' + (json.error[0] || JSON.stringify(json.error)), 'error');
+                return false;
+            }
+            log('[recruit] Recrutamento iniciado com sucesso!', 'success');
+            return true;
+        }).catch(function(err) {
+            log('[recruit] Erro de rede: ' + err.message, 'error');
+            return false;
+        });
+    }
+
     function motorDeDecisaoMacro(state, villageId) {
         var tasks = [];
         var maxFila = (state.premium && state.premium.ativo) ? 5 : 2;
@@ -3833,6 +4012,46 @@
                 return Promise.resolve(phase0Tasks);
             } else {
                 log('[Fase 0] ✅ Fase 0 completa - prosseguindo com lógica normal', 'success');
+            }
+        }
+        // ==========================================
+
+        // ==========================================
+        // [FASE 1 – FUNDAÇÕES] - Perfis de Rush
+        // ==========================================
+        // Após Fase 0 completa, executa construções rígidas da Fase 1
+        // Ordem: HQ3 → Madeira3 → Argila3 → Ferro3 → HQ5 → Quartel1 → Lanceiros
+        // Ignora completamente milestones, scoring e outra lógica de construção
+        // ==========================================
+        if (PHASE0_PROFILES.indexOf(memory.profile) !== -1) {
+            var rushPhase = getRushPhase(villageId);
+            
+            if (rushPhase === 1) {
+                var phase1Tasks = getPhase1Tasks(state, villageId);
+                
+                if (phase1Tasks && phase1Tasks.length > 0) {
+                    log('[Fase 1] 🚨 Executando tarefas da Fase 1 (ignorando lógica normal)', 'warning');
+                    visHUD.meta = '[FASE 1] ' + (phase1Tasks[0].reason || 'Fundações');
+                    visHUD.acao = 'FASE 1';
+                    visHUD.motivo = phase1Tasks[0].reason;
+                    
+                    // Atualiza HUD baseado na tarefa
+                    if (phase1Tasks[0].type === 'build_general') {
+                        HUD.set('build_general', 'running', 'Fase 1: ' + phase1Tasks[0].reason);
+                    } else if (phase1Tasks[0].type === 'recruit') {
+                        HUD.set('recruit', 'running', 'Fase 1: Recrutamento');
+                    }
+                    
+                    HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
+                    return Promise.resolve(phase1Tasks);
+                } else {
+                    // Verificar se Fase 1 está completa para avançar para Fase 2
+                    if (isPhase1Complete(state, villageId)) {
+                        markPhase1Complete(villageId);
+                    } else {
+                        log('[Fase 1] ⏳ Aguardando condições para completar Fase 1', 'info');
+                    }
+                }
             }
         }
         // ==========================================
@@ -6262,7 +6481,7 @@
                                 return success;
                             });
                     }
-                    else if (task.id === 'build_general') {
+                    else if (task.id === 'build_general' || task.id === 'phase1_build') {
                         if (VillageMemory.isTargetBlocked(villageId, task.target)) {
                             log('[executor] Target ' + task.target + ' está bloqueado, pulando', 'warning');
                             p = Promise.resolve(false);
@@ -6279,6 +6498,18 @@
                                     return result && result.ok;
                                 });
                         }
+                    }
+                    else if (task.id === 'recruit' || task.id === 'phase1_recruit') {
+                        // Recrutamento genérico de unidades
+                        p = bgRecruitUnit(villageId, task.unit, task.count)
+                            .then(function(success) {
+                                if (success) {
+                                    VillageMemory.recordSuccess(villageId, 'recruit_' + task.unit);
+                                } else {
+                                    VillageMemory.recordError(villageId, 'recruit_' + task.unit, 'recruit_fail');
+                                }
+                                return success;
+                            });
                     }
                     else if (task.id === 'statue' || task.id === 'phase0_statue') {
                         p = bgBuildStatue(villageId, state.csrf)
