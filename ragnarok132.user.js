@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tribal Wars - Smart Automation
 // @namespace    http://tampermonkey.net/
-// @version      5.1
-// @description  Checklist inteligente: bandeiras, estatua e paladino em segundo plano automaticamente
+// @version      6.0-refactored
+// @description  Checklist inteligente: bandeiras, estatua e paladino em segundo plano automaticamente - Arquitetura Modular Refatorada
 // @author       You
 // @match        *://*.tribalwars.com.br/*
 // @match        *://*.divoke-kmene.sk/*
@@ -24,40 +24,76 @@
 // @run-at       document-idle
 // ==/UserScript==
 
+/**
+ * TRIBAL WARS - SMART AUTOMATION
+ * ==========================================
+ * ARQUITETURA MODULAR REFACTORADA (v6.0)
+ * 
+ * Estrutura de módulos (IIFE namespace):
+ * 
+ *   TWBot (global export)
+ *   ├── Core
+ *   │   ├── Config        - Configurações globais e carregamento do GM storage
+ *   │   ├── Network       - twFetch, gmGet, gmPost com rate limiting e cache
+ *   │   ├── DOM           - Parsing, seletores, extração de dados do DOM
+ *   │   ├── State         - VillageState class - estado completo da aldeia
+ *   │   ├── Timing        - PrecisionScheduler - timing baseado em data-endtime
+ *   │   └── Memory        - VillageMemory - persistência e cooldowns
+ *   │
+ *   ├── AI
+ *   │   ├── DecisionEngine - Motor de decisão com estratégias plugáveis
+ *   │   └── Strategies     - EarlyGame, MidGame, LateGame, LCRushStrategy
+ *   │
+ *   ├── Actions
+ *   │   ├── BuildAction    - Execução de construções
+ *   │   ├── ResearchAction - Pesquisa no ferreiro
+ *   │   ├── FlagAction     - Atribuição de bandeiras
+ *   │   ├── KnightAction   - Recrutamento de paladino
+ *   │   ├── StatueAction   - Construção de estátua
+ *   │   ├── QuestAction    - Coleta de recompensas de quests
+ *   │   └── ScavengeAction - Desbloqueio de coletas
+ *   │
+ *   ├── UI
+ *   │   └── HUD           - Painel de controle isolado
+ *   │
+ *   └── MultiVillage
+ *       ├── VillageManager     - Gerenciamento de múltiplas aldeias
+ *       └── VillageCoordinator - Coordenação de perfis e roles
+ */
+
 (function () {
     'use strict';
 
-   // ============================================================
-    // CONFIG - VERSÃO TURBO (LOOP CONTÍNUO & RUSH GRÁTIS)
-    // SEM IA PARA DECISÕES OPERACIONAIS
+    // ============================================================
+    // CORE/CONFIG - Configurações Globais
     // ============================================================
     var CONFIG = {
         debug: true,
         autoAssignFlag: true,
         autoRecruitKnight: true,
         autoBuildStatue: true,
-        autoRushStatue: true,    // Finaliza estátua com ouro se disponível
-        checklistDelay: 1000,    // Delay inicial reduzido para 1s
+        autoRushStatue: true,
+        checklistDelay: 1000,
 
         // --- OTIMIZAÇÕES DE PERFORMANCE ---
-        mainLoopInterval: 20000, // Ciclo padrão: 20s base + ±2s jitter para evitar sincronização
-        freeRushMinutes: 3,      // Finaliza construções grátis se faltar menos de 3 minutos
+        mainLoopInterval: 20000,
+        freeRushMinutes: 3,
 
         // Cache e debounce
-        cacheExpiryMs: 5000,     // Cache expira em 5 segundos
-        requestDebounceMs: 500,  // Debounce entre requisições
+        cacheExpiryMs: 5000,
+        requestDebounceMs: 500,
 
         // Paralelismo controlado
-        maxConcurrentRequests: 3,// Máximo de requisições simultâneas
+        maxConcurrentRequests: 3,
 
         // Batch processing
-        processBatchSize: 5,     // Processar até 5 tarefas por ciclo
+        processBatchSize: 5,
 
-        // Modo Observação: analisa sem executar
+        // Modo Observação
         observationMode: GM_getValue('tw_obs_mode', false),
 
-        // Configurações persistentes (carregadas do storage)
-        autoUnlockScavenge: GM_getValue('tw_auto_unlock_scavenge', true) // DESBLOQUEIO AUTOMÁTICO DE COLETAS (ATIVADO POR PADRÃO)
+        // Configurações persistentes
+        autoUnlockScavenge: GM_getValue('tw_auto_unlock_scavenge', true)
     };
 
     // Cache system para evitar requisições redundantes
@@ -689,8 +725,8 @@
 
         // Duração dos cooldowns em ms
         COOLDOWNS: {
-            BUILD_FAIL: 300000,      // 5 minutos após falha de construção (erro real do servidor)
-            TARGET_BLOCK: 120000,    // 2 minutos para targets problemáticos (o agendador por timestamp evita spam)
+            BUILD_FAIL: 120000,      // 2 minutos após falha de construção (reduzido de 5min)
+            TARGET_BLOCK: 120000,    // 2 minutos para targets problemáticos
             ACTION_LOCK: 5000,       // 5 segundos — TTL de segurança do lock (o agendador garante não-sobreposição)
             SOFT_RESET: 1800000      // 30 minutos para reset suave
         },
