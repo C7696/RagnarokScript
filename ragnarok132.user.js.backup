@@ -725,8 +725,8 @@
 
         // Duração dos cooldowns em ms
         COOLDOWNS: {
-            BUILD_FAIL: 120000,      // 2 minutos após falha de construção (reduzido de 5min)
-            TARGET_BLOCK: 120000,    // 2 minutos para targets problemáticos
+            BUILD_FAIL: 300000,      // 5 minutos após falha de construção (erro real do servidor)
+            TARGET_BLOCK: 120000,    // 2 minutos para targets problemáticos (o agendador por timestamp evita spam)
             ACTION_LOCK: 5000,       // 5 segundos — TTL de segurança do lock (o agendador garante não-sobreposição)
             SOFT_RESET: 1800000      // 30 minutos para reset suave
         },
@@ -2240,28 +2240,6 @@
         wall:       { barracks: 1 }
     };
 
-    // Níveis máximos por edifício - usado para detecção de edifícios completamente construídos
-    var TW_BUILDING_MAX_LEVELS = {
-        main:       30,
-        barracks:   25,
-        church:     15,
-        watchtower: 20,
-        stable:     20,
-        garage:     15,
-        snob:       1,
-        smith:      20,
-        place:      1,      // Praça só tem nível 1
-        statue:     1,      // Estátua só tem nível 1 (nível 2 é upgrade da estátua existente)
-        market:     25,
-        wood:       30,
-        stone:      30,
-        iron:       30,
-        farm:       30,
-        storage:    30,
-        hide:       10,
-        wall:       20
-    };
-
     // ============================================================
     // CAMADA DE VALIDAÇÃO DE BUILD EXECUTÁVEL (V6.0)
     // Verifica robustez: recursos, botão, fila, sucesso real
@@ -2499,13 +2477,6 @@
     // Botões são JS-rendered: nunca há <a href> com ajaxaction no HTML bruto.
     // Portanto a detecção baseia-se na LINHA DA TABELA #main_buildrow_{id}.
     function isButtonAvailable(buildingId, mainDoc) {
-        // --- 0. Verificação de nível máximo primeiro ---
-        var nivelAtual = parseInt((typeof game_data !== 'undefined' && game_data.village && game_data.village.buildings && game_data.village.buildings[buildingId]) ? game_data.village.buildings[buildingId].level : 0);
-        var nivelMaximo = TW_BUILDING_MAX_LEVELS[buildingId] || 99;
-        if (nivelAtual >= nivelMaximo) {
-            return false; // Edifício já está no nível máximo
-        }
-
         // --- 1. Linha canônica TW: #main_buildrow_{building} ---
         var buildRow = mainDoc.querySelector('#main_buildrow_' + buildingId);
         if (buildRow) {
@@ -2514,10 +2485,6 @@
             if (timerEl && timerEl.textContent.trim()) return false;
             var maxEl = buildRow.querySelector('.max-level, .level_max, .all, [data-max-level], .upgrade-button.all');
             if (maxEl) return false;
-            // Fallback: se a linha existe mas NÃO há nenhum botão/link de upgrade presente,
-            // significa que o edifício está no máximo
-            var upgradeBtn = buildRow.querySelector('.upgrade-button, .btn-upgrade, a[href*="ajaxaction"]');
-            if (!upgradeBtn) return false;
             return true;
         }
 
@@ -2550,11 +2517,8 @@
     /**
      * Verifica se a construção entrou na fila após solicitação
      * Usado para validar sucesso real da ação
-     * @param {string} responseText - Resposta do servidor
-     * @param {string} buildingId - ID do edifício construído
-     * @param {string} villageId - ID da aldeia (opcional, para registro de edifícios maxed)
      */
-    function verifyQueuedAfterBuild(responseText, buildingId, villageId) {
+    function verifyQueuedAfterBuild(responseText, buildingId) {
         try {
             var json = JSON.parse(responseText);
             // Verificar sucesso explícito
@@ -2565,17 +2529,6 @@
             // Verificar mensagens de erro comuns
             if (json.error) {
                 log('[verificação] Erro ao construir ' + buildingId + ': ' + json.error, 'error');
-                // Verificar se é erro de "edifício totalmente construído"
-                var errorMsg = json.error.toLowerCase();
-                if (errorMsg.indexOf('totalmente') !== -1 || 
-                    errorMsg.indexOf('fully built') !== -1 || 
-                    errorMsg.indexOf('maximum level') !== -1 ||
-                    errorMsg.indexOf('max level') !== -1) {
-                    // Registrar como edifício permanentemente maxed
-                    if (villageId) {
-                        registerMaxedBuilding(villageId, buildingId);
-                    }
-                }
                 return false;
             }
             // Verificar se há indicador de "já em construção"
@@ -2596,14 +2549,6 @@
                 responseText.indexOf('failed') !== -1 ||
                 responseText.indexOf('not enough resources') !== -1) {
                 log('[verificação] Erro detectado na resposta para ' + buildingId, 'error');
-                // Verificar mensagem de edifício totalmente construído no texto
-                if (responseText.toLowerCase().indexOf('totalmente') !== -1 ||
-                    responseText.toLowerCase().indexOf('fully built') !== -1 ||
-                    responseText.toLowerCase().indexOf('maximum level') !== -1) {
-                    if (villageId) {
-                        registerMaxedBuilding(villageId, buildingId);
-                    }
-                }
                 return false;
             }
         }
@@ -2614,59 +2559,10 @@
     }
 
     /**
-     * Registra um edifício como permanentemente construído (nível máximo atingido)
-     * @param {string} villageId - ID da aldeia
-     * @param {string} buildingId - ID do edifício
-     */
-    function registerMaxedBuilding(villageId, buildingId) {
-        try {
-            var key = 'tw_maxed_buildings_' + villageId;
-            var maxedRaw = GM_getValue(key, null);
-            var maxedList = maxedRaw ? (typeof maxedRaw === 'string' ? JSON.parse(maxedRaw) : maxedRaw) : [];
-            if (!maxedList.includes(buildingId)) {
-                maxedList.push(buildingId);
-                GM_setValue(key, JSON.stringify(maxedList));
-                log('[maxed] Edifício ' + buildingId + ' registrado como NÍVEL MÁXIMO permanente em ' + villageId, 'success');
-            }
-        } catch (e) {
-            log('[maxed] Erro ao registrar edifício maxed: ' + e.message, 'error');
-        }
-    }
-
-    /**
-     * Verifica se um edifício já foi registrado como nível máximo
-     * @param {string} villageId - ID da aldeia
-     * @param {string} buildingId - ID do edifício
-     * @returns {boolean} true se o edifício está registrado como maxed
-     */
-    function isBuildingMaxed(villageId, buildingId) {
-        try {
-            var key = 'tw_maxed_buildings_' + villageId;
-            var maxedRaw = GM_getValue(key, null);
-            var maxedList = maxedRaw ? (typeof maxedRaw === 'string' ? JSON.parse(maxedRaw) : maxedRaw) : [];
-            return maxedList.includes(buildingId);
-        } catch (e) {
-            return false;
-        }
-    }
-
-    /**
      * Validação completa de build executável
      * Combina todas as verificações: pré-requisitos, recursos, botão, fila
      */
     function isBuildExecutable(buildingId, state, mainDoc) {
-        // 0. Verificar nível máximo primeiro (antes de qualquer outra verificação)
-        var nivelAtual = parseInt(state.niveis[buildingId] || 0);
-        var nivelMaximo = TW_BUILDING_MAX_LEVELS[buildingId] || 99;
-        if (nivelAtual >= nivelMaximo) {
-            return false; // Edifício já atingiu o nível máximo
-        }
-
-        // 0b. Verificar se está registrado como permanentemente maxed no GM storage
-        if (state.villageId && isBuildingMaxed(state.villageId, buildingId)) {
-            return false; // Edifício já foi registrado como nível máximo permanente
-        }
-
         // 1. Pré-requisitos básicos
         if (!state.podeSerConstruido[buildingId]) return false;
 
@@ -2675,6 +2571,7 @@
 
         // 3. Extrair custos (priorizar DOM, fallback tabela)
         var baseCosts = TW_BUILDING_COSTS[buildingId];
+        var nivelAtual = parseInt(state.niveis[buildingId] || 0);
         var costs = extractCosts(buildingId, mainDoc, baseCosts);
 
         if (!costs) return false;
@@ -4040,16 +3937,6 @@
                     if ((state.niveis[ed] || 0) >= 25) return false;
                     if (ed === 'main' && _HQ_LOCKED) return false;
 
-                    // Edifícios de utilidade restrita - só construir em fases específicas
-                    if (ed === 'place') return false; // Nunca construir automaticamente (nível máximo 1)
-                    if (ed === 'hide' && state.phase !== 'LATE') return false; // Esconderijo só late game
-                    if (ed === 'statue' && (state.niveis['statue'] || 0) >= 1) return false; // Estátua já construída (max 1)
-                    if (ed === 'church') return false; // Igreja só construção manual
-                    if (ed === 'watchtower') return false; // Torre só construção manual
-                    if (ed === 'garage') return false; // Oficina só construção manual
-                    // Nobre: só quando puder produzir (HQ >= 20 e Smith >= 20)
-                    if (ed === 'snob' && (parseInt(state.niveis['main'] || 0) < 20 || parseInt(state.niveis['smith'] || 0) < 20)) return false;
-
                     // [LC RUSH] - Se estiver em modo LC Rush, só permite edifícios do caminho crítico
                     if (isLCRush && lcRushCandidates.length > 0) {
                         var isCritical = lcRushCandidates.some(function(c) { return c.building === ed; });
@@ -4628,7 +4515,7 @@
         try {
             var resp = await twFetch(buildUrl, 'POST', body);
             // Usar camada de verificação robusta
-            var success = verifyQueuedAfterBuild(resp, building, villageId);
+            var success = verifyQueuedAfterBuild(resp, building);
             if (success) {
                 log('[builder] ' + building + ' confirmado na fila!', 'success');
                 // Pequeno delay para o servidor processar antes da próxima ação
