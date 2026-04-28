@@ -1,5 +1,1 @@
-```
-# Userscripts
-*.user.js.bak
-*.user.js~
-```
+Nothing should be ignored in this case, as the only modified file is a source code file (.user.js) without any build artifacts, dependencies, or temporary files in the changes.
