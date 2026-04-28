@@ -2761,6 +2761,132 @@
         }
     };
 
+    // ============================================================
+    // INSPETOR DE BOT - DETECÇÃO DE GARGALO IMINENTE
+    // Calcula quando o armazém vai encher e compara com o próximo ciclo do bot.
+    // Se HorasParaEncher < TempoProximoCiclo, o bot DEVE interromper a fila normal
+    // e subir Armazém ou a Mina específica que está causando o gargalo.
+    // Retorna: { riscoOverflow: bool, horasParaEncher: number, recursoGargalo: string, deveInterromper: bool }
+    // ============================================================
+    function inspetorDeBot(state) {
+        var resultado = {
+            riscoOverflow: false,
+            horasParaEncher: Infinity,
+            recursoGargalo: null,
+            deveInterromper: false,
+            tempoProximoCicloHoras: 0,
+            detalhes: {}
+        };
+
+        try {
+            // 1. Calcular espaço livre por recurso
+            var espacoLivre = {
+                wood:  state.recursos.max - (state.recursos.wood  || 0),
+                stone: state.recursos.max - (state.recursos.stone || 0),
+                iron:  state.recursos.max - (state.recursos.iron  || 0)
+            };
+
+            // 2. Taxa de produção por hora (já disponível em state.producao)
+            var producaoPorHora = {
+                wood:  state.producao.wood  || 0,
+                stone: state.producao.stone || 0,
+                iron:  state.producao.iron  || 0
+            };
+
+            // 3. Calcular HorasParaEncher por recurso: (Capacidade - Estoque) / ProducaoPorHora
+            ['wood', 'stone', 'iron'].forEach(function(res) {
+                if (producaoPorHora[res] > 0) {
+                    resultado.detalhes[res] = {
+                        espacoLivre: espacoLivre[res],
+                        producaoHora: producaoPorHora[res],
+                        horasParaEncher: espacoLivre[res] / producaoPorHora[res]
+                    };
+                } else {
+                    resultado.detalhes[res] = {
+                        espacoLivre: espacoLivre[res],
+                        producaoHora: 0,
+                        horasParaEncher: Infinity
+                    };
+                }
+            });
+
+            // 4. Identificar o recurso que vai encher primeiro (gargalo)
+            var minHoras = Infinity;
+            var recursoCritico = null;
+            ['wood', 'stone', 'iron'].forEach(function(res) {
+                if (resultado.detalhes[res].horasParaEncher < minHoras) {
+                    minHoras = resultado.detalhes[res].horasParaEncher;
+                    recursoCritico = res;
+                }
+            });
+
+            resultado.horasParaEncher = minHoras;
+            resultado.recursoGargalo = recursoCritico;
+
+            // 5. Calcular Tempo do Próximo Ciclo do Bot
+            // Baseado no tempo restante da fila de construção + intervalo padrão
+            var tempoFilaRestanteSegundos = getTempoRestanteFilaConstrucao();
+            var intervaloPadraoMs = CONFIG.mainLoopInterval;
+            var tempoProximoCicloMs = tempoFilaRestanteSegundos > 0 
+                ? Math.min(tempoFilaRestanteSegundos * 1000 + 2000, intervaloPadraoMs)
+                : intervaloPadraoMs;
+            
+            resultado.tempoProximoCicloHoras = tempoProximoCicloMs / 1000 / 3600;
+
+            // 6. Decisão: Se HorasParaEncher < TempoProximoCiclo, DEVE INTERROMPER
+            // Margem de segurança: 20% adicional para evitar edge cases
+            var margemSeguranca = 1.2;
+            if (resultado.horasParaEncher < (resultado.tempoProximoCicloHoras * margemSeguranca)) {
+                resultado.riscoOverflow = true;
+                resultado.deveInterromper = true;
+                log('[Inspetor de Bot] ⚠️ GARGALO IMINENTE: ' + recursoCritico + 
+                    ' vai encher em ' + resultado.horasParaEncher.toFixed(2) + 'h | ' +
+                    'Próximo ciclo em ' + resultado.tempoProximoCicloHoras.toFixed(4) + 'h | ' +
+                    'ESPAÇO LIVRE: ' + espacoLivre[recursoCritico] + ' | ' +
+                    'PRODUÇÃO/h: ' + producaoPorHora[recursoCritico], 'warning');
+            } else if (resultado.horasParaEncher < 4.0) {
+                // Alerta preventivo se for encher em menos de 4 horas
+                resultado.riscoOverflow = true;
+                resultado.deveInterromper = false;
+                log('[Inspetor de Bot] 📊 ALERTA: ' + recursoCritico + 
+                    ' vai encher em ' + resultado.horasParaEncher.toFixed(2) + 'h', 'info');
+            } else {
+                log('[Inspetor de Bot] ✓ OK: Armazém seguro por ' + resultado.horasParaEncher.toFixed(2) + 'h (' + recursoCritico + ')', 'info');
+            }
+
+        } catch (e) {
+            log('[Inspetor de Bot] Erro: ' + e.message, 'error');
+            resultado.riscoOverflow = false;
+            resultado.deveInterromper = false;
+        }
+
+        return resultado;
+    }
+
+    // ============================================================
+    // TEMPO RESTANTE DA FILA DE CONSTRUÇÃO
+    // Varre a fila de construção e retorna o tempo em segundos até a próxima conclusão
+    // ============================================================
+    function getTempoRestanteFilaConstrucao() {
+        var minSegundos = Infinity;
+        try {
+            var timers = document.querySelectorAll(
+                '#build_queue tr .timer, #build_queue .timer, ' +
+                '.lit-item .timer, .buildqueue_container .timer, ' +
+                '.timer:not(.finished)'
+            );
+            timers.forEach(function(el) {
+                var s = timeToSeconds(el.textContent.trim());
+                if (s > 0 && s < minSegundos) {
+                    minSegundos = s;
+                }
+            });
+        } catch (e) {
+            log('[fila-tempo] Erro: ' + e.message, 'warning');
+        }
+        return minSegundos === Infinity ? 0 : minSegundos;
+    }
+
 function motorDeDecisaoMacro(state, villageId) {
         var tasks = [];
         var maxFila = (state.premium && state.premium.ativo) ? 5 : 2;
@@ -2957,6 +3083,16 @@ function motorDeDecisaoMacro(state, villageId) {
                 stone: state.recursos.stone / state.recursos.max,
                 iron: state.recursos.iron / state.recursos.max
             };
+
+            // [Inspetor de Bot Ativado] - Verificação crítica de gargalo
+            var inspecaoBot = inspetorDeBot(state);
+            
+            // Se o inspetor detectar que deve interromper, força riscoArmazem para TRUE
+            if (inspecaoBot.deveInterromper) {
+                riscoArmazem = true;
+                log('[Inspetor de Bot] 🚨 AÇÃO NECESSÁRIA: Interromper fila normal e priorizar ' + 
+                    (inspecaoBot.recursoGargalo === 'storage' ? 'ARMAZÉM' : 'MINA DE ' + inspecaoBot.recursoGargalo.toUpperCase()), 'error');
+            }
 
             // Calcular produção total por hora de todos os recursos
             var producaoTotalHora = (state.producao.wood || 0) + (state.producao.stone || 0) + (state.producao.iron || 0);
