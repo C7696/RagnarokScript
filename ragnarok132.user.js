@@ -433,12 +433,225 @@
         return (worldId + '_' + market + '_' + lang).replace(/[^a-z0-9_]/gi, '_');
     }
 
-    // Fatores de peso estratégico por fase e tipo de edifício
-    const STRATEGIC_WEIGHT = {
-        EARLY: { wood: 1.8, stone: 1.8, iron: 1.4, farm: 1.6, storage: 1.1, main: 0.7, barracks: 1.0, smith: 2.2, statue: 1.2, market: 1.7, stable: 2.0, wall: 0.4, place: 0.5, hide: 0.3, church: 0.3, watchtower: 0.3, garage: 0.2, snob: 0.1 },
-        MID:   { wood: 1.0, stone: 1.0, iron: 1.1, farm: 1.1, storage: 1.0, main: 1.8, barracks: 1.1, smith: 1.2, statue: 1.0, market: 0.9, stable: 1.3, wall: 1.1, place: 0.6, hide: 0.5, church: 0.7, watchtower: 0.6, garage: 0.8, snob: 0.3 },
-        LATE:  { wood: 0.8, stone: 0.8, iron: 1.2, farm: 0.9, storage: 0.9, main: 2.0, barracks: 1.0, smith: 1.3, statue: 1.1, market: 1.0, stable: 1.2, wall: 1.3, place: 0.7, hide: 0.6, church: 0.9, watchtower: 0.8, garage: 1.0, snob: 1.5 }
-    };
+    // ============================================================
+    // MOTOR DE DECISÃO PROFISSIONAL (PIPELINE)
+    // ============================================================
+    // O bot avalia regras na ordem de importância absoluta.
+    // A primeira regra que "bater" define a construção.
+    // SEM STRATEGIC_WEIGHT - decisão baseada em regras prioritárias
+    
+    function decideNextBuild(villageState) {
+        // 1. EMERGÊNCIA: Idle de Recurso (Anti-Cap)
+        let idleRisk = checkResourceIdleRisk(villageState, CONFIG.mainLoopInterval / 3600000);
+        if (idleRisk && canAfford(villageState, idleRisk.building)) {
+            return { target: idleRisk.building, reason: idleRisk.reason };
+        }
+
+        // 2. EMERGÊNCIA: Idle de População (Fila de tropa parada)
+        let popDeficit = villageState.recruitmentQueuePopCost - villageState.freePop;
+        if (popDeficit > 0) {
+            if (canAfford(villageState, 'farm')) {
+                return { target: 'farm', reason: 'Evitar idle militar: População insuficiente para fila' };
+            }
+        }
+
+        // 3. GATEKEEPING: Caminho Crítico do Milestone Atual
+        let milestoneTarget = getMilestoneTarget(villageState);
+        if (milestoneTarget) {
+            // Tenta pagar o milestone. Se não conseguir, o passo 4 vai resolver
+            if (canAfford(villageState, milestoneTarget.building)) {
+                return { target: milestoneTarget.building, reason: 'Caminho Crítico para: ' + milestoneTarget.goal };
+            } else {
+                // Se o milestone é caro (ex: HQ 10), precisamos de recursos.
+                // Vamos para o passo 4 (ROI)
+            }
+        }
+
+        // 4. ECONOMIA: ROI de Recursos (Payback Time)
+        // Só chega aqui se não há emergências de idle nem milestones bloqueantes
+        if (villageState.phase === 'ECONOMY_SCALE' || !canAffordMilestone(villageState)) {
+            let bestROI = calculateBestResourceROI(villageState);
+            if (bestROI && canAfford(villageState, bestROI.building)) {
+                return { target: bestROI.building, reason: 'Melhor ROI: Paga-se em ' + bestROI.paybackHours.toFixed(1) + 'h' };
+            }
+        }
+
+        // 5. FALLBACK: Armazém/Fazenda preventivos ou Mercado
+        // Preventivo de storage se recursos > 85%
+        if (villageState.recursos.wood / villageState.recursos.max > 0.85 ||
+            villageState.recursos.stone / villageState.recursos.max > 0.85 ||
+            villageState.recursos.iron / villageState.recursos.max > 0.85) {
+            if (canAfford(villageState, 'storage')) {
+                return { target: 'storage', reason: 'Prevenção de overflow iminente' };
+            }
+        }
+        
+        // Preventivo de farm se pop > 90%
+        if (villageState.populacao.current / villageState.populacao.max > 0.90) {
+            if (canAfford(villageState, 'farm')) {
+                return { target: 'farm', reason: 'Prevenção de gargalo populacional' };
+            }
+        }
+        
+        // Mercado como última opção para balancear recursos
+        if (canAfford(villageState, 'market')) {
+            return { target: 'market', reason: 'Balanceamento de recursos via mercado' };
+        }
+
+        return null; // Guarda recursos para o próximo tick
+    }
+
+    // ============================================================
+    // VERIFICAÇÃO DE IDLE DE RECURSO (ANTI-CAP)
+    // ============================================================
+    function checkResourceIdleRisk(state, hoursUntilNextCheck) {
+        // Calcula tempo até cada recurso atingir 100% da capacidade
+        var tempoAteOverflow = { wood: 999, stone: 999, iron: 999 };
+        ['wood', 'stone', 'iron'].forEach(function(res) {
+            var prod = state.producao[res] || 0;
+            var capRestante = state.recursos.max - (state.recursos[res] || 0);
+            if (prod > 0) {
+                tempoAteOverflow[res] = capRestante / prod;
+            }
+        });
+        
+        // Identifica o recurso mais crítico (menor tempo até cap)
+        var minTempo = Math.min(tempoAteOverflow.wood, tempoAteOverflow.stone, tempoAteOverflow.iron);
+        var recursoCritico = null;
+        
+        if (tempoAteOverflow.wood === minTempo) recursoCritico = 'wood';
+        else if (tempoAteOverflow.stone === minTempo) recursoCritico = 'stone';
+        else recursoCritico = 'iron';
+        
+        // Se algum recurso vai saturar antes do próximo check, é emergência
+        if (minTempo < hoursUntilNextCheck * 1.5) {
+            return {
+                building: recursoCritico,
+                reason: 'Risco de idle: ' + recursoCritico + ' satura em ' + minTempo.toFixed(2) + 'h'
+            };
+        }
+        
+        return null;
+    }
+
+    // ============================================================
+    // LÓGICA DE MILESTONE (STATE MACHINE)
+    // ============================================================
+    function getMilestoneTarget(villageState) {
+        const b = villageState.buildings;
+        
+        // Estado 1: Base
+        if (b.main < 3) return { building: 'main', goal: 'HQ 3' };
+        if (b.wood < 4) return { building: 'wood', goal: 'Base Eco 4' };
+        if (b.stone < 4) return { building: 'stone', goal: 'Base Eco 4' };
+        if (b.iron < 3) return { building: 'iron', goal: 'Base Eco 3' };
+        if (b.main < 5) return { building: 'main', goal: 'HQ 5 p/ Quartel' };
+        if (b.barracks < 1) return { building: 'barracks', goal: 'Quartel 1' };
+        
+        // Estado 2: Rush Prep (Eco até 10, Sem Smith)
+        if (b.wood < 10) return { building: 'wood', goal: 'Eco 10 (Pre-LC)' };
+        if (b.stone < 10) return { building: 'stone', goal: 'Eco 10 (Pre-LC)' };
+        if (b.iron < 10) return { building: 'iron', goal: 'Eco 10 (Pre-LC)' };
+        
+        // Estado 3: Military Gate (O caminho crítico para LC)
+        if (b.barracks < 5) return { building: 'barracks', goal: 'Pre-req Estábulo' };
+        if (b.main < 10) return { building: 'main', goal: 'Acelerar Build + Pre-req' };
+        if (b.stable < 3) return { building: 'stable', goal: 'Pre-req LC' };
+        if (b.smith < 5) return { building: 'smith', goal: 'Pesquisa LC' }; // Smith só agora!
+
+        // Se passou de tudo, está no Estado 4 (Escala)
+        return null;
+    }
+
+    // ============================================================
+    // CÁLCULO DE MELHOR ROI DE RECURSOS
+    // ============================================================
+    function calculateBestResourceROI(state) {
+        var candidates = [];
+        
+        // Avalia apenas minas de recursos e storage
+        ['wood', 'stone', 'iron', 'storage'].forEach(function(building) {
+            var currentLevel = parseInt(state.buildings[building] || 0);
+            var nextLevel = currentLevel + 1;
+            
+            // Custo base aproximado (pode ser refinado com dados reais do jogo)
+            var costMultiplier = Math.pow(1.5, currentLevel);
+            var baseCost = building === 'storage' ? 200 : 60;
+            
+            var cost = {
+                wood: Math.floor(baseCost * costMultiplier * (building === 'wood' ? 1.5 : 1)),
+                stone: Math.floor(baseCost * costMultiplier * (building === 'stone' ? 1.5 : 1)),
+                iron: Math.floor(baseCost * costMultiplier * (building === 'iron' ? 1.5 : 1))
+            };
+            
+            // Benefício: aumento de produção por hora
+            var productionGain = 0;
+            if (building === 'wood') productionGain = state.producao.wood * 0.163; // ~16.3%/nível
+            else if (building === 'stone') productionGain = state.producao.stone * 0.163;
+            else if (building === 'iron') productionGain = state.producao.iron * 0.163;
+            else if (building === 'storage') productionGain = state.recursos.max * 0.5; // +50% capacidade
+            
+            // Payback time em horas
+            var totalCost = cost.wood + cost.stone + cost.iron;
+            var paybackHours = totalCost / (productionGain || 1);
+            
+            candidates.push({
+                building: building,
+                cost: cost,
+                paybackHours: paybackHours,
+                productionGain: productionGain
+            });
+        });
+        
+        // Ordena por menor payback time
+        candidates.sort(function(a, b) {
+            return a.paybackHours - b.paybackHours;
+        });
+        
+        return candidates.length > 0 ? candidates[0] : null;
+    }
+
+    // ============================================================
+    // VERIFICA SE PODE PAGAR CONSTRUÇÃO
+    // ============================================================
+    function canAfford(state, building) {
+        if (!building) return false;
+        
+        var currentLevel = parseInt(state.buildings[building] || 0);
+        var nextLevel = currentLevel + 1;
+        
+        // Custo base aproximado
+        var costMultiplier = Math.pow(1.5, currentLevel);
+        var baseCost = building === 'storage' ? 200 : 
+                       building === 'farm' ? 120 : 
+                       building === 'main' ? 300 : 60;
+        
+        var cost = {
+            wood: Math.floor(baseCost * costMultiplier * 0.4),
+            stone: Math.floor(baseCost * costMultiplier * 0.35),
+            iron: Math.floor(baseCost * costMultiplier * 0.25)
+        };
+        
+        // Edifícios militares têm custo diferente
+        if (['barracks', 'stable', 'smith', 'wall'].includes(building)) {
+            cost.wood = Math.floor(baseCost * costMultiplier * 0.3);
+            cost.stone = Math.floor(baseCost * costMultiplier * 0.4);
+            cost.iron = Math.floor(baseCost * costMultiplier * 0.3);
+        }
+        
+        return state.recursos.wood >= cost.wood &&
+               state.recursos.stone >= cost.stone &&
+               state.recursos.iron >= cost.iron;
+    }
+
+    // ============================================================
+    // VERIFICA SE PODE PAGAR ALGUM MILESTONE
+    // ============================================================
+    function canAffordMilestone(state) {
+        var milestoneTarget = getMilestoneTarget(state);
+        if (!milestoneTarget) return false;
+        return canAfford(state, milestoneTarget.building);
+    }
 
     // Bônus do HQ como multiplicador de produtividade (acelera TODAS as construções)
     const HQ_PRODUCTIVITY_BONUS = {
@@ -2753,7 +2966,8 @@
             label = '+comércio';
 
         } else {
-            var pesoFb = (STRATEGIC_WEIGHT[state.phase] || {})[ed] || 0.5;
+            // Peso padrão unificado para edifícios utilitários (sem STRATEGIC_WEIGHT)
+            var pesoFb = 0.5;
             beneficio = prodTotal * pesoFb * 0.03;
             label = '+util(' + ed + ')';
         }
@@ -3573,7 +3787,9 @@ function motorDeDecisaoMacro(state, villageId) {
                         var roiData = calcBuildROI(ed, nivelAtual, state, tempoAteGargalo, recursosPercent);
 
                         // ── PESOS ESTRATÉGICOS ────────────────────────────────────
-                        var pesoBase     = STRATEGIC_WEIGHT[state.phase][ed] || 1.0;
+                        // Pipeline de Decisão: peso base unificado (sem STRATEGIC_WEIGHT)
+                        // A prioridade vem das regras do pipeline, não de pesos por fase
+                        var pesoBase     = 1.0;
                         var ajustePerfil = profileWeights[ed] || 1.0;
 
                         // ── URGÊNCIA DE PRODUÇÃO (mina gargalo) ───────────────────
