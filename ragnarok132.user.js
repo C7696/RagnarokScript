@@ -1589,11 +1589,44 @@
     }
 
     // Scoring estratégico: perfil > fase > milestone > situação econômica
-    // ctx: { profile, phase, milestoneId, taxaPop, riscoArmazem, recursosPercent }
+    // ctx: { profile, phase, milestoneId, taxaPop, riscoArmazem, recursosPercent, phase0 }
     function scoreFlagStrategic(flag, ctx) {
         ctx = ctx || {};
         var profile = ctx.profile || 'balanced';
         var phase   = ctx.phase   || 'MID';
+
+        // FASE 0: Restringe apenas a categoria 'resource' e ordena por stone > wood > iron
+        if (ctx.phase0 === true) {
+            // Se não é categoria resource, retorna score muito baixo para ser ignorada
+            if (flag.category !== 'resource') {
+                return -9999;
+            }
+            // Ordenação específica por recurso: stone > wood > iron
+            // Usa o tipo da bandeira para determinar o recurso específico
+            var resourcePriority = {
+                'stone': 1000,  // Prioridade máxima na Fase 0
+                'wood':  500,   // Prioridade média
+                'iron':  100    // Prioridade mínima
+            };
+            
+            // Tenta identificar o recurso específico pelo type ou description
+            var flagType = flag.type || '';
+            var flagDesc = (flag.description || '').toLowerCase();
+            
+            var resourceBonus = 0;
+            if (flagType.indexOf('stone') !== -1 || flagDesc.indexOf('argila') !== -1 || flagDesc.indexOf('clay') !== -1 || flagDesc.indexOf('stone') !== -1) {
+                resourceBonus = resourcePriority.stone;
+            } else if (flagType.indexOf('wood') !== -1 || flagDesc.indexOf('madeira') !== -1 || flagDesc.indexOf('wood') !== -1) {
+                resourceBonus = resourcePriority.wood;
+            } else if (flagType.indexOf('iron') !== -1 || flagDesc.indexOf('ferro') !== -1 || flagDesc.indexOf('iron') !== -1) {
+                resourceBonus = resourcePriority.iron;
+            } else {
+                // Se não conseguiu identificar, assume prioridade padrão baseada no level
+                resourceBonus = flag.level * 10;
+            }
+            
+            return resourceBonus + (flag.level * 3);
+        }
 
         // 1. Base: peso do perfil da aldeia
         var profileW = CATEGORY_PRIORITY_BY_PROFILE[profile] || CATEGORY_PRIORITY_BY_PROFILE.balanced;
@@ -3644,6 +3677,126 @@
         return WANTED_UNITS_BY_PHASE[phase] || WANTED_UNITS_BY_PHASE.MID;
     }
 
+    // ============================================================
+    // FASE 0 OBRIGATÓRIA PARA PERFIS DE RUSH
+    // ============================================================
+    // Perfis que usam Fase 0: lc_rush, speed_start, hard_military_rush
+    // Ordem: 1) Estátua, 2) Bandeira (recurso: stone > wood > iron), 3) Paladino
+    // Nenhuma outra construção pode ser iniciada enquanto Fase 0 não estiver completa
+    // ============================================================
+    var PHASE0_PROFILES = ['lc_rush', 'speed_start', 'hard_military_rush'];
+
+    function isPhase0Complete(state, villageId) {
+        // Verifica se estátua está construída, bandeira atribuída e paladino presente/em recrutamento
+        var statueDone = state.statueEnabled === true;
+        var flagDone = state.flagAssigned === true;
+        var knight = state.knight || {};
+        var knightDone = (knight.isPresent === true || knight.isRecruiting === true);
+
+        // Carregar estado persistente da Fase 0
+        var persistedState = GM_getValue('twbot_phase0_done_' + villageId, null);
+        
+        // Se já foi marcado como completo e as condições ainda se mantêm, retorna true
+        if (persistedState && persistedState.complete) {
+            // Verifica se as condições ainda são válidas (aldeia não foi conquistada, paladino não morreu)
+            if (statueDone && flagDone && knightDone) {
+                return true;
+            }
+            // Se algo mudou (ex: paladino morreu), precisa refazer
+            GM_setValue('twbot_phase0_done_' + villageId, null);
+        }
+
+        return statueDone && flagDone && knightDone;
+    }
+
+    function markPhase0Complete(villageId) {
+        GM_setValue('twbot_phase0_done_' + villageId, {
+            complete: true,
+            timestamp: Date.now()
+        });
+        log('[Fase 0] ✅ Fase 0 concluída e persistida para aldeia ' + villageId, 'success');
+    }
+
+    function getPhase0Tasks(state, villageId) {
+        var tasks = [];
+        var memory = VillageMemory.get(villageId);
+        var profile = memory.profile;
+
+        // Só aplica Fase 0 para perfis de rush
+        if (PHASE0_PROFILES.indexOf(profile) === -1) {
+            return tasks;
+        }
+
+        // Verifica se Fase 0 já está completa (carrega do storage persistente)
+        if (isPhase0Complete(state, villageId)) {
+            log('[Fase 0] ✅ Fase 0 já completa para aldeia ' + villageId, 'info');
+            return tasks;
+        }
+
+        log('[Fase 0] 🎯 Verificando tarefas pendentes para perfil ' + profile, 'info');
+
+        var knight = state.knight || {};
+        var statueExists = state.statueEnabled && knight.statueExists;
+
+        // TAREFA 1: Construir estátua (se ainda não existir)
+        if (!state.statueEnabled || !statueExists) {
+            log('[Fase 0] 🗿 Tarefa 1: Construir estátua (obrigatório)', 'warning');
+            tasks.push({
+                id: 'phase0_statue',
+                action: 'DO',
+                type: 'statue',
+                reason: 'Fase 0: Estátua obrigatória para perfis de rush',
+                priority: 1
+            });
+            // Se estátua não existe, não prossegue para outras tarefas
+            return tasks;
+        }
+
+        // TAREFA 2: Atribuir bandeira de recurso (se ainda não houver bandeira)
+        if (!state.flagAssigned) {
+            log('[Fase 0] 🚩 Tarefa 2: Atribuir bandeira de recurso (obrigatório)', 'warning');
+            tasks.push({
+                id: 'phase0_flag',
+                action: 'DO',
+                type: 'flag',
+                reason: 'Fase 0: Bandeira de recurso obrigatória',
+                priority: 2,
+                ctx: {
+                    phase0: true,
+                    profile: profile,
+                    phase: state.phase,
+                    milestoneId: memory.currentMilestone,
+                    taxaPop: state.populacao.max > 0 ? state.populacao.current / state.populacao.max : 0,
+                    riscoArmazem: false,
+                    recursosPercent: {
+                        wood: state.recursos.wood / (state.recursos.max || 1),
+                        stone: state.recursos.stone / (state.recursos.max || 1),
+                        iron: state.recursos.iron / (state.recursos.max || 1)
+                    }
+                }
+            });
+            // Se bandeira não foi atribuída, não prossegue para paladino
+            return tasks;
+        }
+
+        // TAREFA 3: Recrutar paladino (se estátua existe e paladino não está presente/em recrutamento)
+        if (!knight.isPresent && !knight.isRecruiting && statueExists) {
+            log('[Fase 0] ⚔️ Tarefa 3: Recrutar paladino (obrigatório)', 'warning');
+            tasks.push({
+                id: 'phase0_knight',
+                action: 'DO',
+                type: 'knight',
+                reason: 'Fase 0: Paladino obrigatório',
+                priority: 3
+            });
+            return tasks;
+        }
+
+        // Se chegou aqui, todas as tarefas foram completadas
+        markPhase0Complete(villageId);
+        return tasks;
+    }
+
     function motorDeDecisaoMacro(state, villageId) {
         var tasks = [];
         var maxFila = (state.premium && state.premium.ativo) ? 5 : 2;
@@ -3652,6 +3805,37 @@
         var memory = VillageMemory.get(villageId);
 
         var visHUD = { fase: state.phase, gargalo: 'OK', meta: 'Calculando...', acao: 'Monitorando', motivo: 'Ativo' };
+
+        // ==========================================
+        // [FASE 0 OBRIGATÓRIA] - Perfis de Rush
+        // ==========================================
+        // Antes de qualquer lógica de milestones ou scoring, verifica se é perfil de rush
+        // e se a Fase 0 está completa. Se não estiver, executa APENAS tarefas da Fase 0.
+        // ==========================================
+        if (PHASE0_PROFILES.indexOf(memory.profile) !== -1) {
+            var phase0Tasks = getPhase0Tasks(state, villageId);
+            if (phase0Tasks && phase0Tasks.length > 0) {
+                log('[Fase 0] 🚨 Executando tarefas da Fase 0 (ignorando lógica normal)', 'warning');
+                visHUD.meta = '[FASE 0] ' + (phase0Tasks[0].reason || 'Preparação');
+                visHUD.acao = 'FASE 0';
+                visHUD.motivo = phase0Tasks[0].reason;
+                
+                // Atualiza HUD baseado na tarefa
+                if (phase0Tasks[0].type === 'statue') {
+                    HUD.set('statue', 'running', 'Fase 0: Construindo estátua');
+                } else if (phase0Tasks[0].type === 'flag') {
+                    HUD.set('flag', 'running', 'Fase 0: Bandeiras');
+                } else if (phase0Tasks[0].type === 'knight') {
+                    HUD.set('knight', 'running', 'Fase 0: Recrutando paladino');
+                }
+                
+                HUD.updateDiagnostics(visHUD.fase, visHUD.gargalo, visHUD.meta, visHUD.acao, visHUD.motivo);
+                return Promise.resolve(phase0Tasks);
+            } else {
+                log('[Fase 0] ✅ Fase 0 completa - prosseguindo com lógica normal', 'success');
+            }
+        }
+        // ==========================================
 
         // ==========================================
         // [MÁQUINA DE ESTADOS LC RUSH] - CAMINHO CRÍTICO
@@ -6096,7 +6280,7 @@
                                 });
                         }
                     }
-                    else if (task.id === 'statue') {
+                    else if (task.id === 'statue' || task.id === 'phase0_statue') {
                         p = bgBuildStatue(villageId, state.csrf)
                             .then(function(success) {
                                 if (success) {
@@ -6107,7 +6291,7 @@
                                 return success;
                             });
                     }
-                    else if (task.id === 'knight') {
+                    else if (task.id === 'knight' || task.id === 'phase0_knight') {
                         p = bgRecruitKnight(villageId)
                             .then(function(success) {
                                 if (success) {
@@ -6118,7 +6302,7 @@
                                 return success;
                             });
                     }
-                    else if (task.id === 'flag') {
+                    else if (task.id === 'flag' || task.id === 'phase0_flag') {
                         p = bgAssignFlagGhost(villageId, state.phase, task.ctx)
                             .then(function(res) {
                                 if (res && res.ok) {
