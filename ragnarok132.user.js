@@ -2768,6 +2768,158 @@
     // e subir Armazém ou a Mina específica que está causando o gargalo.
     // Retorna: { riscoOverflow: bool, horasParaEncher: number, recursoGargalo: string, deveInterromper: bool }
     // ============================================================
+
+    // ============================================================
+    // INSPETOR DE FILA DE TREINAMENTO - GARFO DE POPULAÇÃO
+    // Lê a fila de recrutamento do Quartel e Estábulo para calcular
+    // População Futura = População Atual + Tropas na Fila
+    // Se População Futura >= Limite da Fazenda, Farm é prioridade ZERO
+    // Seletores usados: #trainqueue_wrap_barracks, #trainqueue_wrap_stable, tr[id^="trainorder_"]
+    // ============================================================
+    function getTrainingQueueInfo(mainDoc) {
+        var queueInfo = {
+            barracks: { count: 0, population: 0, units: [] },
+            stable:   { count: 0, population: 0, units: [] },
+            totalPopulation: 0
+        };
+
+        if (!mainDoc) return queueInfo;
+
+        try {
+            // Custo de população por tipo de unidade (padrão TW)
+            var UNIT_POP_COST = {
+                'spear': 1, 'sword': 1, 'axe': 1, 'archer': 1,
+                'light': 3, 'marcher': 3, 'heavy': 5, 'ram': 4, 'catapult': 6,
+                'snob': 10, 'knight': 1, 'spy': 1
+            };
+
+            // Varre fila do quartel: #trainqueue_wrap_barracks ou #trainqueue_barracks
+            var barracksRows = mainDoc.querySelectorAll('#trainqueue_wrap_barracks tr[id^="trainorder_"], #trainqueue_barracks tr[id^="trainorder_"]');
+            barracksRows.forEach(function(row) {
+                var unitLink = row.querySelector('a[href*="unit="]');
+                if (unitLink) {
+                    var href = unitLink.getAttribute('href') || '';
+                    var match = href.match(/unit=([a-z_]+)/);
+                    var unitType = match ? match[1] : 'unknown';
+                    
+                    // Extrair quantidade da célula de texto (seletor fornecido: td:nth-of-type(1))
+                    var textCell = row.querySelector('td:nth-of-type(1)');
+                    var qtyMatch = textCell ? textCell.textContent.trim().match(/(\d+)/) : null;
+                    var qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+
+                    var popCost = UNIT_POP_COST[unitType] || 1;
+                    queueInfo.barracks.count += qty;
+                    queueInfo.barracks.population += qty * popCost;
+                    queueInfo.barracks.units.push({ type: unitType, qty: qty, pop: popCost });
+                }
+            });
+
+            // Varre fila do estábulo: #trainqueue_wrap_stable ou #trainqueue_stable
+            var stableRows = mainDoc.querySelectorAll('#trainqueue_wrap_stable tr[id^="trainorder_"], #trainqueue_stable tr[id^="trainorder_"]');
+            stableRows.forEach(function(row) {
+                var unitLink = row.querySelector('a[href*="unit="]');
+                if (unitLink) {
+                    var href = unitLink.getAttribute('href') || '';
+                    var match = href.match(/unit=([a-z_]+)/);
+                    var unitType = match ? match[1] : 'unknown';
+                    
+                    var textCell = row.querySelector('td:nth-of-type(1)');
+                    var qtyMatch = textCell ? textCell.textContent.trim().match(/(\d+)/) : null;
+                    var qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+
+                    var popCost = UNIT_POP_COST[unitType] || 1;
+                    queueInfo.stable.count += qty;
+                    queueInfo.stable.population += qty * popCost;
+                    queueInfo.stable.units.push({ type: unitType, qty: qty, pop: popCost });
+                }
+            });
+
+            queueInfo.totalPopulation = queueInfo.barracks.population + queueInfo.stable.population;
+
+            if (queueInfo.totalPopulation > 0) {
+                log('[fila-tropas] Quartel: ' + queueInfo.barracks.count + ' unidades (' + 
+                    queueInfo.barracks.population + ' pop) | Estábulo: ' + queueInfo.stable.count + 
+                    ' unidades (' + queueInfo.stable.population + ' pop) | Total: ' + 
+                    queueInfo.totalPopulation + ' pop comprometida', 'info');
+            }
+        } catch (e) {
+            log('[fila-tropas] Erro: ' + e.message, 'warning');
+        }
+
+        return queueInfo;
+    }
+
+    // ============================================================
+    // INSPETOR DE POPULAÇÃO - GARFO DE FARM
+    // Calcula: População Livre = Capacidade - População Atual
+    // População Futura = População Atual + Tropas na Fila
+    // Se População Futura >= Limite, Farm é prioridade ZERO (Idle Militar = Morte)
+    // ============================================================
+    function inspetorDePopulacao(state, queueInfo) {
+        var resultado = {
+            populacaoLivre: 0,
+            populacaoComprometida: 0,
+            populacaoFutura: 0,
+            limiteFarm: 0,
+            deficit: 0,
+            devePriorizarFarm: false,
+            nivelAlerta: 'normal',
+            margemSegura: 0
+        };
+
+        try {
+            resultado.limiteFarm = state.populacao.max || 1;
+            resultado.populacaoComprometida = queueInfo.totalPopulation || 0;
+            resultado.populacaoLivre = (state.populacao.max || 0) - (state.populacao.current || 0);
+            resultado.populacaoFutura = (state.populacao.current || 0) + resultado.populacaoComprometida;
+
+            // Calcular déficit: se população futura > limite, temos problema
+            resultado.deficit = resultado.populacaoFutura - resultado.limiteFarm;
+            resultado.margemSegura = resultado.limiteFarm - resultado.populacaoFutura;
+
+            // Níveis de alerta baseados na taxa de ocupação futura
+            var taxaOcupacaoFutura = (resultado.populacaoFutura / resultado.limiteFarm) * 100;
+
+            if (resultado.deficit > 0 || taxaOcupacaoFutura >= 98) {
+                resultado.nivelAlerta = 'emergencia';
+                resultado.devePriorizarFarm = true;
+                log('[Inspetor de População] 🚨 EMERGÊNCIA: Farm saturado! Déficit de ' + 
+                    resultado.deficit + ' pop | Ocupação futura: ' + taxaOcupacaoFutura.toFixed(1) + '%', 'error');
+            } else if (taxaOcupacaoFutura >= 95) {
+                resultado.nivelAlerta = 'prioridade_alta';
+                resultado.devePriorizarFarm = true;
+                log('[Inspetor de População] ⚠️ PRIORIDADE ALTA: Farm quase cheio (' + 
+                    taxaOcupacaoFutura.toFixed(1) + '%) | Margem: ' + resultado.margemSegura + ' pop', 'warning');
+            } else if (taxaOcupacaoFutura >= 90) {
+                resultado.nivelAlerta = 'preparacao';
+                resultado.devePrioritarFarm = false;
+                log('[Inspetor de População] 📋 PREPARAÇÃO: Farm em ' + 
+                    taxaOcupacaoFutura.toFixed(1) + '% | Margem: ' + resultado.margemSegura + ' pop', 'info');
+            } else if (taxaOcupacaoFutura >= 80) {
+                resultado.nivelAlerta = 'observacao';
+                resultado.devePrioritarFarm = false;
+                log('[Inspetor de População] 👁️ OBSERVAÇÃO: Farm em ' + 
+                    taxaOcupacaoFutura.toFixed(1) + '%', 'info');
+            } else {
+                resultado.nivelAlerta = 'normal';
+                resultado.devePrioritarFarm = false;
+                log('[Inspetor de População] ✓ OK: Farm seguro (' + 
+                    taxaOcupacaoFutura.toFixed(1) + '% | Margem: ' + resultado.margemSegura + ' pop)', 'info');
+            }
+
+            // Regra de ouro: Se déficit > 0, Quartel/Estábulo DEVEM parar imediatamente
+            if (resultado.deficit > 0) {
+                log('[Inspetor de População] 🛑 IDLE MILITAR = MORTE: Interromper recrutamento e subir Farm!', 'error');
+            }
+
+        } catch (e) {
+            log('[Inspetor de População] Erro: ' + e.message, 'error');
+            resultado.devePrioritarFarm = false;
+        }
+
+        return resultado;
+    }
+
     function inspetorDeBot(state) {
         var resultado = {
             riscoOverflow: false,
@@ -3062,16 +3214,25 @@ function motorDeDecisaoMacro(state, villageId) {
             var selectedScoreMargin = 0;
             var selectedAlternative = null;
             var taxaPop = (state.populacao.current / (state.populacao.max || 1)) * 100;
+            // ==========================================
+            // [GARFO DE POPULAÇÃO] INSPETOR DE FILA DE TREINAMENTO
+            // ==========================================
+            // Lê a fila de recrutamento do Quartel/Estábulo e calcula População Futura
+            // Se População Futura >= Limite da Fazenda, Farm é prioridade ZERO
+            var queueInfo = getTrainingQueueInfo(state._mainDoc);
+            var inspecaoPopulacao = inspetorDePopulacao(state, queueInfo);
 
             // ==========================================
             // SISTEMA PROATIVO DE FARM - 4 NÍVEIS DE ALERTA
             // ==========================================
             // 82% → observação | 88% → preparação | 92% → prioridade alta | 95%+ → emergência
-            var nivelAlertaFarm = 'normal';
-            if (taxaPop >= 95) nivelAlertaFarm = 'emergencia';
-            else if (taxaPop >= 92) nivelAlertaFarm = 'prioridade_alta';
-            else if (taxaPop >= 88) nivelAlertaFarm = 'preparacao';
-            else if (taxaPop >= 82) nivelAlertaFarm = 'observacao';
+            var nivelAlertaFarm = inspecaoPopulacao.nivelAlerta;
+            
+            // Sobrescrever nível de alerta se o inspetor de população detectar déficit
+            if (inspecaoPopulacao.devePriorizarFarm) {
+                nivelAlertaFarm = inspecaoPopulacao.nivelAlerta === 'emergencia' ? 'emergencia' : 'prioridade_alta';
+                log('[Garfo de População] 🎯 FARM PRIORIZADO: Déficit iminente detectado!', 'warning');
+            }
 
             // ==========================================
             // SISTEMA PROATIVO DE STORAGE - PREVISÃO DE OVERFLOW
